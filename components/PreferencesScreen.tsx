@@ -17,7 +17,7 @@
 
 import { useState } from "react";
 import { db } from "@/lib/firebase";
-import { ref, set } from "firebase/database";
+import { ref, set, get } from "firebase/database";
 import { Session } from "@/lib/types";
 import { CUISINES } from "@/lib/constants";
 
@@ -74,11 +74,12 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
       true
     );
 
-    // If everyone is now done, flip to the reveal phase.
-    // This fires on all devices simultaneously via their Firebase listeners.
+    // Fresh read to avoid race condition — if two people lock in simultaneously,
+    // stale local state would cause both to see only themselves as done.
     const allIds = Object.keys(session.participants || {});
-    const updatedDone = { ...preferencesDone, [participantId]: true };
-    const allDone = allIds.every((id) => updatedDone[id] === true);
+    const snap = await get(ref(db, `sessions/${sessionId}/responses/preferencesDone`));
+    const current = snap.val() || {};
+    const allDone = allIds.every((id) => current[id] === true);
 
     if (allDone) {
       await set(ref(db, `sessions/${sessionId}/phase`), "preferences-reveal");

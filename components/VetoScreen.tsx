@@ -15,7 +15,7 @@
 
 import { useState } from "react";
 import { db } from "@/lib/firebase";
-import { ref, set, remove } from "firebase/database";
+import { ref, set, get, remove } from "firebase/database";
 import { Session } from "@/lib/types";
 import { CUISINES } from "@/lib/constants";
 
@@ -65,10 +65,11 @@ export default function VetoScreen({ sessionId, session, participantId }: Props)
       true
     );
 
-    // Check if everyone is now done
+    // Fresh read to avoid race condition
     const allIds = Object.keys(session.participants || {});
-    const updatedDone = { ...vetoDone, [participantId]: true };
-    const allDone = allIds.every((id) => updatedDone[id] === true);
+    const snap = await get(ref(db, `sessions/${sessionId}/responses/vetoDone`));
+    const current = snap.val() || {};
+    const allDone = allIds.every((id) => current[id] === true);
 
     if (allDone) {
       await set(ref(db, `sessions/${sessionId}/phase`), "veto-reveal");

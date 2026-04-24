@@ -15,7 +15,7 @@
 
 import { useState } from "react";
 import { db } from "@/lib/firebase";
-import { ref, set } from "firebase/database";
+import { ref, set, get } from "firebase/database";
 import { Session } from "@/lib/types";
 import { DIETARY } from "@/lib/constants";
 
@@ -57,10 +57,11 @@ export default function DietaryScreen({ sessionId, session, participantId }: Pro
       true
     );
 
-    // Check if everyone is now done — if so, advance to preferences
+    // Fresh read to avoid race condition
     const allIds = Object.keys(session.participants || {});
-    const updatedDone = { ...dietaryDone, [participantId]: true };
-    const allDone = allIds.every((id) => updatedDone[id] === true);
+    const snap = await get(ref(db, `sessions/${sessionId}/responses/dietaryDone`));
+    const current = snap.val() || {};
+    const allDone = allIds.every((id) => current[id] === true);
 
     if (allDone) {
       await set(ref(db, `sessions/${sessionId}/phase`), "preferences");

@@ -9,7 +9,7 @@
 // a tie, we take the more affordable option.
 
 import { db } from "@/lib/firebase";
-import { ref, set } from "firebase/database";
+import { ref, set, get } from "firebase/database";
 import { Session } from "@/lib/types";
 
 const PRICE_TIERS = ["$", "$$", "$$$", "$$$$"] as const;
@@ -35,9 +35,11 @@ export default function PriceScreen({ sessionId, session, participantId }: Props
       tier
     );
 
+    // Fresh read to avoid race condition
     const allIds = Object.keys(session.participants || {});
-    const updatedResponses = { ...responses, [participantId]: tier };
-    const allVoted = allIds.every((id) => updatedResponses[id] !== undefined);
+    const snap = await get(ref(db, `sessions/${sessionId}/responses/price`));
+    const current = snap.val() || {};
+    const allVoted = allIds.every((id) => current[id] !== undefined);
 
     if (allVoted) {
       await set(ref(db, `sessions/${sessionId}/phase`), "price-reveal");

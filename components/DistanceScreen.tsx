@@ -10,7 +10,7 @@
 
 import { useState } from "react";
 import { db } from "@/lib/firebase";
-import { ref, set } from "firebase/database";
+import { ref, set, get } from "firebase/database";
 import { Session } from "@/lib/types";
 
 interface Props {
@@ -35,10 +35,11 @@ export default function DistanceScreen({ sessionId, session, participantId }: Pr
       sliderValue
     );
 
-    // Check if everyone has now submitted
+    // Fresh read to avoid race condition
     const allIds = Object.keys(session.participants || {});
-    const updatedResponses = { ...responses, [participantId]: sliderValue };
-    const allVoted = allIds.every((id) => updatedResponses[id] !== undefined);
+    const snap = await get(ref(db, `sessions/${sessionId}/responses/distance`));
+    const current = snap.val() || {};
+    const allVoted = allIds.every((id) => current[id] !== undefined);
 
     if (allVoted) {
       await set(ref(db, `sessions/${sessionId}/phase`), "distance-reveal");

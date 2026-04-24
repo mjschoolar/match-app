@@ -10,7 +10,7 @@
 // reveal phase — which triggers a re-render on all devices simultaneously.
 
 import { db } from "@/lib/firebase";
-import { ref, set } from "firebase/database";
+import { ref, set, get } from "firebase/database";
 import { Session } from "@/lib/types";
 
 interface Props {
@@ -34,12 +34,13 @@ export default function DineInScreen({ sessionId, session, participantId }: Prop
       choice
     );
 
-    // Check if everyone has now voted by merging our new vote with what's
-    // already in the session. We do this locally rather than re-fetching
-    // because we just wrote the last missing piece.
+    // Fresh read from Firebase to avoid race condition: if two people submit
+    // at nearly the same moment, stale local state could cause both to see
+    // only themselves as done and neither would advance the phase.
     const allIds = Object.keys(session.participants || {});
-    const updatedResponses = { ...responses, [participantId]: choice };
-    const allVoted = allIds.every((id) => updatedResponses[id] !== undefined);
+    const snap = await get(ref(db, `sessions/${sessionId}/responses/dineIn`));
+    const current = snap.val() || {};
+    const allVoted = allIds.every((id) => current[id] !== undefined);
 
     if (allVoted) {
       await set(ref(db, `sessions/${sessionId}/phase`), "dine-in-reveal");
