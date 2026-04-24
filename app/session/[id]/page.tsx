@@ -15,6 +15,7 @@ import { ref, onValue } from "firebase/database";
 import { Session } from "@/lib/types";
 import LobbyScreen from "@/components/LobbyScreen";
 import DineInScreen from "@/components/DineInScreen";
+import DistanceScreen from "@/components/DistanceScreen";
 
 export default function SessionPage() {
   const params = useParams();
@@ -84,6 +85,16 @@ export default function SessionPage() {
   if (session.phase === "dine-in" || session.phase === "dine-in-reveal") {
     return (
       <DineInScreen
+        sessionId={sessionId}
+        session={session}
+        participantId={participantId}
+      />
+    );
+  }
+
+  if (session.phase === "distance" || session.phase === "distance-reveal") {
+    return (
+      <DistanceScreen
         sessionId={sessionId}
         session={session}
         participantId={participantId}
