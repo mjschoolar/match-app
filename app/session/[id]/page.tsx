@@ -20,6 +20,10 @@ import PriceScreen from "@/components/PriceScreen";
 import VetoScreen from "@/components/VetoScreen";
 import DietaryScreen from "@/components/DietaryScreen";
 import PreferencesScreen from "@/components/PreferencesScreen";
+import SwipeScreen from "@/components/SwipeScreen";
+import WaitingScreen from "@/components/WaitingScreen";
+import AnticipationScreen from "@/components/AnticipationScreen";
+import SummaryScreen from "@/components/SummaryScreen";
 
 export default function SessionPage() {
   const params = useParams();
@@ -146,7 +150,35 @@ export default function SessionPage() {
     );
   }
 
-  // Placeholder for phases we haven't built yet
+  if (session.phase === "swipe") {
+    // Participants who have finished see the waiting screen;
+    // everyone else sees their own swipe stack.
+    if (session.swipeComplete?.[participantId]) {
+      return <WaitingScreen />;
+    }
+    return (
+      <SwipeScreen
+        sessionId={sessionId}
+        session={session}
+        participantId={participantId}
+      />
+    );
+  }
+
+  if (session.phase === "anticipation") {
+    return (
+      <AnticipationScreen
+        sessionId={sessionId}
+        isCreator={session.creatorId === participantId}
+      />
+    );
+  }
+
+  if (session.phase === "summary") {
+    return <SummaryScreen session={session} />;
+  }
+
+  // Catch-all for any unexpected phase value
   return (
     <main className="min-h-screen flex items-center justify-center p-8 bg-gray-950 text-white">
       <p className="text-gray-400 font-mono">phase: {session.phase}</p>
