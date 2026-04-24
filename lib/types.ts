@@ -34,6 +34,8 @@ export interface Session {
     // dietaryDone tracks submission for the same reason as vetoDone.
     dietaryDone?: Record<string, boolean>;
     preferences?: Record<string, string[]>;
+    // preferencesDone tracks who has locked in — same empty-array workaround.
+    preferencesDone?: Record<string, boolean>;
   };
   swipeComplete?: Record<string, boolean>;
   swipeDecisions?: Record<string, Record<string, string>>;

@@ -19,6 +19,7 @@ import DistanceScreen from "@/components/DistanceScreen";
 import PriceScreen from "@/components/PriceScreen";
 import VetoScreen from "@/components/VetoScreen";
 import DietaryScreen from "@/components/DietaryScreen";
+import PreferencesScreen from "@/components/PreferencesScreen";
 
 export default function SessionPage() {
   const params = useParams();
@@ -128,6 +129,16 @@ export default function SessionPage() {
   if (session.phase === "dietary") {
     return (
       <DietaryScreen
+        sessionId={sessionId}
+        session={session}
+        participantId={participantId}
+      />
+    );
+  }
+
+  if (session.phase === "preferences" || session.phase === "preferences-reveal") {
+    return (
+      <PreferencesScreen
         sessionId={sessionId}
         session={session}
         participantId={participantId}
