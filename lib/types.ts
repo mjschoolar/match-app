@@ -26,7 +26,13 @@ export interface Session {
     distance?: Record<string, number>;
     price?: Record<string, string>;
     veto?: Record<string, string[]>;
+    // vetoDone tracks who has tapped "Done" on the veto screen.
+    // Needed because Firebase can't store empty arrays — without this,
+    // "no vetoes selected" and "hasn't voted yet" would look identical.
+    vetoDone?: Record<string, boolean>;
     dietary?: Record<string, string[]>;
+    // dietaryDone tracks submission for the same reason as vetoDone.
+    dietaryDone?: Record<string, boolean>;
     preferences?: Record<string, string[]>;
   };
   swipeComplete?: Record<string, boolean>;

@@ -17,6 +17,7 @@ import LobbyScreen from "@/components/LobbyScreen";
 import DineInScreen from "@/components/DineInScreen";
 import DistanceScreen from "@/components/DistanceScreen";
 import PriceScreen from "@/components/PriceScreen";
+import VetoScreen from "@/components/VetoScreen";
 
 export default function SessionPage() {
   const params = useParams();
@@ -106,6 +107,16 @@ export default function SessionPage() {
   if (session.phase === "price" || session.phase === "price-reveal") {
     return (
       <PriceScreen
+        sessionId={sessionId}
+        session={session}
+        participantId={participantId}
+      />
+    );
+  }
+
+  if (session.phase === "veto" || session.phase === "veto-reveal") {
+    return (
+      <VetoScreen
         sessionId={sessionId}
         session={session}
         participantId={participantId}
