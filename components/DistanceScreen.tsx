@@ -1,12 +1,11 @@
 "use client";
 // DistanceScreen — Pre-swipe step 2 of 6.
 //
-// Each participant sets a distance (1–10 miles) using a slider.
-// Responses appear live on everyone's screen as they're submitted.
-// When all have responded, the phase flips to "distance-reveal".
-//
-// Tie-breaking: we use the minimum (most conservative) distance so
-// the result works for everyone in the group.
+// V2 changes:
+//   - "N of 3 locked in" counter replaces the named response list during voting
+//   - Slider stays visible in locked/disabled state after submitting
+//   - 1000ms delay before phase advances on the last submission
+//   - Tiebreaker: median (changed from minimum in V1)
 
 import { useState } from "react";
 import { db } from "@/lib/firebase";
@@ -20,16 +19,22 @@ interface Props {
 }
 
 export default function DistanceScreen({ sessionId, session, participantId }: Props) {
-  const [sliderValue, setSliderValue] = useState(3); // default: 3 miles
+  const [sliderValue, setSliderValue] = useState(3);
 
   const isReveal = session.phase === "distance-reveal";
   const isCreator = session.creatorId === participantId;
   const participants = Object.entries(session.participants || {});
+  const totalParticipants = participants.length;
   const responses = session.responses?.distance || {};
-  const myResponse = responses[participantId];
+  const myResponse = responses[participantId]; // undefined until submitted
   const creatorName = session.participants[session.creatorId]?.name ?? "the host";
 
+  const totalResponded = Object.keys(responses).length;
+  const iAmLocked = myResponse !== undefined;
+
   async function handleSubmit() {
+    if (iAmLocked) return; // guard against double-tap
+
     await set(
       ref(db, `sessions/${sessionId}/responses/distance/${participantId}`),
       sliderValue
@@ -42,6 +47,7 @@ export default function DistanceScreen({ sessionId, session, participantId }: Pr
     const allVoted = allIds.every((id) => current[id] !== undefined);
 
     if (allVoted) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
       await set(ref(db, `sessions/${sessionId}/phase`), "distance-reveal");
     }
   }
@@ -50,19 +56,31 @@ export default function DistanceScreen({ sessionId, session, participantId }: Pr
     await set(ref(db, `sessions/${sessionId}/phase`), "price");
   }
 
-  // The group's agreed distance = minimum submitted (most conservative)
-  function getGroupDistance(): number {
-    const values = Object.values(responses) as number[];
+  // V2 tiebreaker: median distance (not minimum)
+  function getMedianDistance(): number {
+    const values = (Object.values(responses) as number[]).sort((a, b) => a - b);
     if (values.length === 0) return 0;
-    return Math.min(...values);
+    const mid = Math.floor(values.length / 2);
+    // Odd count: middle value. Even count: lower of the two middle values.
+    return values.length % 2 !== 0 ? values[mid] : values[mid - 1];
   }
 
   function getSummary(): string {
-    const min = getGroupDistance();
-    if (min <= 2) return `Staying very close — looking within ${min} mile${min === 1 ? "" : "s"}.`;
-    if (min <= 5) return `Staying close — looking within ${min} miles.`;
-    return `Going a bit further — looking within ${min} miles.`;
+    const values = Object.values(responses) as number[];
+    const median = getMedianDistance();
+    const allSame = values.every((v) => v === median);
+
+    if (allSame) {
+      return median <= 2
+        ? `Everyone's keeping it close — looking within ${median} mile${median === 1 ? "" : "s"}.`
+        : `Everyone's on the same page — looking within ${median} miles.`;
+    }
+    // Spread exists — acknowledge the middle-ground feel
+    return `Splitting the difference — looking within ${median} miles.`;
   }
+
+  // The display value for the slider in locked state
+  const lockedDisplayValue = iAmLocked ? myResponse : sliderValue;
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center p-8 bg-gray-950 text-white">
@@ -72,85 +90,100 @@ export default function DistanceScreen({ sessionId, session, participantId }: Pr
           How far are you willing to go tonight?
         </h2>
 
-        {/* Slider — only shown before this participant has submitted */}
-        {!isReveal && !myResponse && (
-          <div className="space-y-4 bg-gray-800 rounded-2xl p-5">
-            <div className="text-center">
-              <span className="text-4xl font-bold">{sliderValue}</span>
-              <span className="text-gray-400 text-lg ml-1">mi</span>
-            </div>
-            <input
-              type="range"
-              min={1}
-              max={10}
-              step={1}
-              value={sliderValue}
-              onChange={(e) => setSliderValue(Number(e.target.value))}
-              className="w-full accent-white cursor-pointer"
-            />
-            <div className="flex justify-between text-sm text-gray-500">
-              <span>1 mi</span>
-              <span>10 mi</span>
-            </div>
-            <button
-              onClick={handleSubmit}
-              className="w-full py-4 bg-white text-gray-950 rounded-2xl font-semibold text-lg cursor-pointer touch-manipulation"
-            >
-              That works for me
-            </button>
-          </div>
-        )}
-
-        {/* Waiting message after submitting, before reveal */}
-        {!isReveal && myResponse !== undefined && (
-          <div className="bg-gray-800 rounded-2xl p-4 text-center">
-            <p className="text-gray-400 text-sm">You picked <span className="text-white font-semibold">{myResponse} mi</span> — waiting for others...</p>
-          </div>
-        )}
-
-        {/* Live response list */}
-        <div className="space-y-2">
-          {participants.map(([id, participant]) => {
-            const response = responses[id] as number | undefined;
-            return (
-              <div
-                key={id}
-                className="flex items-center justify-between bg-gray-800 rounded-xl px-4 py-3"
-              >
-                <span className="font-medium">
-                  {participant.name}
-                  {id === participantId && (
-                    <span className="text-gray-500 font-normal"> (you)</span>
-                  )}
-                </span>
-                <span className={response !== undefined ? "text-green-400" : "text-gray-500"}>
-                  {response !== undefined ? `✓ ${response} mi` : "..."}
-                </span>
+        {/* ── VOTING STATE — slider always visible, locked after submitting ── */}
+        {!isReveal && (
+          <>
+            <div className="space-y-4 bg-gray-800 rounded-2xl p-5">
+              {/* Value display */}
+              <div className="text-center">
+                <span className="text-4xl font-bold">{lockedDisplayValue}</span>
+                <span className="text-gray-400 text-lg ml-1">mi</span>
+                {iAmLocked && (
+                  <span className="ml-3 text-green-400 text-sm font-medium">Locked in ✓</span>
+                )}
               </div>
-            );
-          })}
-        </div>
 
-        {/* Reveal: summary */}
+              {/* Slider — disabled after locking in */}
+              <input
+                type="range"
+                min={1}
+                max={10}
+                step={1}
+                value={iAmLocked ? myResponse : sliderValue}
+                onChange={(e) => {
+                  if (!iAmLocked) setSliderValue(Number(e.target.value));
+                }}
+                disabled={iAmLocked}
+                className={[
+                  "w-full accent-white",
+                  iAmLocked ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
+                ].join(" ")}
+              />
+              <div className="flex justify-between text-sm text-gray-500">
+                <span>1 mi</span>
+                <span>10 mi</span>
+              </div>
+
+              {/* Submit button — hidden after locking in */}
+              {!iAmLocked && (
+                <button
+                  onClick={handleSubmit}
+                  className="w-full py-4 bg-white text-gray-950 rounded-2xl font-semibold text-lg cursor-pointer touch-manipulation"
+                >
+                  That works for me
+                </button>
+              )}
+            </div>
+
+            {/* Response progress — no names, just count */}
+            <p className="text-center text-sm text-gray-400">
+              {totalResponded} of {totalParticipants} locked in
+            </p>
+          </>
+        )}
+
+        {/* ── REVEAL STATE — named attribution list ── */}
         {isReveal && (
-          <p className="text-center text-lg font-medium pt-2">{getSummary()}</p>
-        )}
+          <>
+            <div className="space-y-2">
+              {participants.map(([id, participant]) => {
+                const response = responses[id] as number | undefined;
+                return (
+                  <div
+                    key={id}
+                    className="flex items-center justify-between bg-gray-800 rounded-xl px-4 py-3"
+                  >
+                    <span className="font-medium">
+                      {participant.name}
+                      {id === participantId && (
+                        <span className="text-gray-500 font-normal"> (you)</span>
+                      )}
+                    </span>
+                    <span className={response !== undefined ? "text-green-400" : "text-gray-500"}>
+                      {response !== undefined ? `✓ ${response} mi` : "..."}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
 
-        {/* Reveal: creator Continue */}
-        {isReveal && isCreator && (
-          <button
-            onClick={handleContinue}
-            className="w-full py-4 bg-white text-gray-950 rounded-2xl font-semibold text-lg cursor-pointer touch-manipulation"
-          >
-            Continue
-          </button>
-        )}
+            <p className="text-center text-lg font-medium pt-2">{getSummary()}</p>
 
-        {/* Reveal: joiner waiting */}
-        {isReveal && !isCreator && (
-          <p className="text-center text-gray-400 text-sm pt-2">
-            Waiting for {creatorName} to continue...
-          </p>
+            {isCreator && (
+              <button
+                onClick={handleContinue}
+                className="w-full py-4 bg-white text-gray-950 rounded-2xl font-semibold text-lg cursor-pointer touch-manipulation"
+              >
+                Continue
+              </button>
+            )}
+
+            {!isCreator && (
+              <p className="text-center text-gray-400 text-sm pt-2">
+                Waiting for {creatorName} to continue...
+              </p>
+            )}
+          </>
         )}
 
       </div>

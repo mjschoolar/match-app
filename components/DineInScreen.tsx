@@ -1,13 +1,11 @@
 "use client";
 // DineInScreen — Pre-swipe step 1 of 6.
 //
-// Two internal states, one component:
-//   phase === "dine-in"        → question + vote buttons + live response list
-//   phase === "dine-in-reveal" → full response list + summary + creator's Continue
-//
-// Voting logic: when a participant votes, their choice is written to Firebase.
-// Then we check if every participant now has a response. If so, we write the
-// reveal phase — which triggers a re-render on all devices simultaneously.
+// V2 changes:
+//   - Count badges on buttons during voting (no named attribution until reveal)
+//   - Buttons stay visible in locked state after voting — not hidden
+//   - 1000ms delay before phase advances on the last vote (anticipation beat)
+//   - Fixed reveal copy for all-dine-in case ("We're eating in" not "going out")
 
 import { db } from "@/lib/firebase";
 import { ref, set, get } from "firebase/database";
@@ -23,26 +21,33 @@ export default function DineInScreen({ sessionId, session, participantId }: Prop
   const isReveal = session.phase === "dine-in-reveal";
   const isCreator = session.creatorId === participantId;
   const participants = Object.entries(session.participants || {});
+  const totalParticipants = participants.length;
   const responses = session.responses?.dineIn || {};
   const myResponse = responses[participantId];
   const creatorName = session.participants[session.creatorId]?.name ?? "the host";
 
+  // Live counts for the badge display — updates as Firebase pushes new responses
+  const dineInCount = Object.values(responses).filter((v) => v === "dine-in").length;
+  const deliveryCount = Object.values(responses).filter((v) => v === "delivery").length;
+  const totalResponded = dineInCount + deliveryCount;
+
   async function handleVote(choice: "dine-in" | "delivery") {
-    // Write this participant's vote to Firebase
+    if (myResponse) return; // guard against double-tap
+
     await set(
       ref(db, `sessions/${sessionId}/responses/dineIn/${participantId}`),
       choice
     );
 
-    // Fresh read from Firebase to avoid race condition: if two people submit
-    // at nearly the same moment, stale local state could cause both to see
-    // only themselves as done and neither would advance the phase.
+    // Fresh read from Firebase to avoid race condition
     const allIds = Object.keys(session.participants || {});
     const snap = await get(ref(db, `sessions/${sessionId}/responses/dineIn`));
     const current = snap.val() || {};
     const allVoted = allIds.every((id) => current[id] !== undefined);
 
     if (allVoted) {
+      // Brief pause before the reveal — creates a beat of anticipation
+      await new Promise((resolve) => setTimeout(resolve, 1000));
       await set(ref(db, `sessions/${sessionId}/phase`), "dine-in-reveal");
     }
   }
@@ -51,18 +56,17 @@ export default function DineInScreen({ sessionId, session, participantId }: Prop
     await set(ref(db, `sessions/${sessionId}/phase`), "distance");
   }
 
-  // Generate a plain-English summary of how the group voted.
-  // Used on the reveal screen.
+  // Reveal summary copy — correctly handles the all-dine-in case
   function getSummary() {
     const votes = Object.values(responses) as string[];
     const total = votes.length;
-    const dineInCount = votes.filter((v) => v === "dine-in").length;
+    const dineInVotes = votes.filter((v) => v === "dine-in").length;
 
-    if (dineInCount === total) return "Everyone's going out.";
-    if (dineInCount === 0) return "Everyone's staying in — let's find delivery.";
-    if (dineInCount > total / 2) return "Mostly going out — we'll look at dine-in spots.";
-    if (dineInCount < total / 2) return "Mostly staying in — we'll look at delivery options.";
-    return "It's a split — we'll look at dine-in spots."; // exact tie
+    if (dineInVotes === total) return "We're eating in tonight.";
+    if (dineInVotes === 0) return "We're going out tonight.";
+    if (dineInVotes > total / 2) return "Mostly going out — we'll look at dine-in spots.";
+    if (dineInVotes < total / 2) return "Mostly staying in — we'll look at delivery options.";
+    return "It's a split — we'll look at dine-in spots.";
   }
 
   return (
@@ -73,69 +77,108 @@ export default function DineInScreen({ sessionId, session, participantId }: Prop
           Going out or staying in?
         </h2>
 
-        {/* Vote buttons — only shown before this participant has voted */}
-        {!isReveal && !myResponse && (
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              onClick={() => handleVote("dine-in")}
-              className="py-5 bg-gray-800 hover:bg-gray-700 active:bg-gray-600 rounded-2xl font-semibold text-lg cursor-pointer touch-manipulation"
-            >
-              Dine in
-            </button>
-            <button
-              onClick={() => handleVote("delivery")}
-              className="py-5 bg-gray-800 hover:bg-gray-700 active:bg-gray-600 rounded-2xl font-semibold text-lg cursor-pointer touch-manipulation"
-            >
-              Delivery
-            </button>
-          </div>
-        )}
-
-        {/* Live response list — visible throughout both states */}
-        <div className="space-y-2">
-          {participants.map(([id, participant]) => {
-            const response = responses[id] as string | undefined;
-            return (
-              <div
-                key={id}
-                className="flex items-center justify-between bg-gray-800 rounded-xl px-4 py-3"
+        {/* ── VOTING STATE — buttons with live count badges ── */}
+        {!isReveal && (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              {/* Dine in button — highlights if this participant chose it */}
+              <button
+                onClick={() => handleVote("dine-in")}
+                disabled={!!myResponse}
+                className={[
+                  "py-5 rounded-2xl font-semibold text-lg touch-manipulation transition-colors",
+                  myResponse === "dine-in"
+                    ? "bg-white text-gray-950 cursor-default"
+                    : myResponse
+                    ? "bg-gray-800 text-gray-600 cursor-default"
+                    : "bg-gray-800 hover:bg-gray-700 active:bg-gray-600 text-white cursor-pointer",
+                ].join(" ")}
               >
-                <span className="font-medium">
-                  {participant.name}
-                  {id === participantId && (
-                    <span className="text-gray-500 font-normal"> (you)</span>
-                  )}
+                Dine in
+                <span className={[
+                  "ml-2 text-sm font-normal",
+                  myResponse === "dine-in" ? "text-gray-500" : "text-gray-500",
+                ].join(" ")}>
+                  ({dineInCount})
                 </span>
-                <span className={response ? "text-green-400" : "text-gray-500"}>
-                  {response
-                    ? `✓ ${response === "dine-in" ? "Dine in" : "Delivery"}`
-                    : "..."}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+              </button>
 
-        {/* Reveal: summary line */}
+              {/* Delivery button */}
+              <button
+                onClick={() => handleVote("delivery")}
+                disabled={!!myResponse}
+                className={[
+                  "py-5 rounded-2xl font-semibold text-lg touch-manipulation transition-colors",
+                  myResponse === "delivery"
+                    ? "bg-white text-gray-950 cursor-default"
+                    : myResponse
+                    ? "bg-gray-800 text-gray-600 cursor-default"
+                    : "bg-gray-800 hover:bg-gray-700 active:bg-gray-600 text-white cursor-pointer",
+                ].join(" ")}
+              >
+                Delivery
+                <span className={[
+                  "ml-2 text-sm font-normal",
+                  myResponse === "delivery" ? "text-gray-500" : "text-gray-500",
+                ].join(" ")}>
+                  ({deliveryCount})
+                </span>
+              </button>
+            </div>
+
+            {/* Response progress — no names, just count */}
+            <p className="text-center text-sm text-gray-400">
+              {myResponse
+                ? `Locked in ✓  ·  ${totalResponded} of ${totalParticipants} responded`
+                : `${totalResponded} of ${totalParticipants} responded`}
+            </p>
+          </>
+        )}
+
+        {/* ── REVEAL STATE — full attribution list ── */}
         {isReveal && (
-          <p className="text-center text-lg font-medium pt-2">{getSummary()}</p>
-        )}
+          <>
+            <div className="space-y-2">
+              {participants.map(([id, participant]) => {
+                const response = responses[id] as string | undefined;
+                return (
+                  <div
+                    key={id}
+                    className="flex items-center justify-between bg-gray-800 rounded-xl px-4 py-3"
+                  >
+                    <span className="font-medium">
+                      {participant.name}
+                      {id === participantId && (
+                        <span className="text-gray-500 font-normal"> (you)</span>
+                      )}
+                    </span>
+                    <span className={response ? "text-green-400" : "text-gray-500"}>
+                      {response
+                        ? `✓ ${response === "dine-in" ? "Dine in" : "Delivery"}`
+                        : "..."}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
 
-        {/* Reveal: creator's Continue button */}
-        {isReveal && isCreator && (
-          <button
-            onClick={handleContinue}
-            className="w-full py-4 bg-white text-gray-950 rounded-2xl font-semibold text-lg cursor-pointer touch-manipulation"
-          >
-            Continue
-          </button>
-        )}
+            <p className="text-center text-lg font-medium pt-2">{getSummary()}</p>
 
-        {/* Reveal: joiner waiting message */}
-        {isReveal && !isCreator && (
-          <p className="text-center text-gray-400 text-sm pt-2">
-            Waiting for {creatorName} to continue...
-          </p>
+            {isCreator && (
+              <button
+                onClick={handleContinue}
+                className="w-full py-4 bg-white text-gray-950 rounded-2xl font-semibold text-lg cursor-pointer touch-manipulation"
+              >
+                Continue
+              </button>
+            )}
+
+            {!isCreator && (
+              <p className="text-center text-gray-400 text-sm pt-2">
+                Waiting for {creatorName} to continue...
+              </p>
+            )}
+          </>
         )}
 
       </div>
