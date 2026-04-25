@@ -139,21 +139,20 @@ export default function VetoScreen({ sessionId, session, participantId }: Props)
                     onClick={() => toggleCuisine(cuisine.id)}
                     disabled={iAmDone}
                     className={[
-                      "py-3 px-2 rounded-xl text-sm font-medium touch-manipulation transition-colors relative",
+                      "py-3 px-2 rounded-xl text-sm font-medium touch-manipulation transition-colors",
                       selected
-                        ? "bg-red-500/20 text-red-300 border border-red-500/40"
-                        : "bg-gray-800 text-gray-300 hover:bg-gray-700",
-                      iAmDone ? "opacity-60 cursor-default" : "cursor-pointer",
+                        ? "bg-red-500/20 text-red-300 border border-red-500/40"           // I vetoed it
+                        : count > 0
+                        ? "bg-red-500/10 text-red-300/70 border border-red-500/20"         // others vetoed it
+                        : "bg-gray-800 text-gray-300 hover:bg-gray-700",                   // nobody yet
+                      iAmDone ? "cursor-default" : "cursor-pointer",
                     ].join(" ")}
                   >
-                    {selected && <span className="mr-1">✕</span>}
+                    {(selected || count > 0) && <span className="mr-1">✕</span>}
                     {cuisine.label}
-                    {/* Count badge — shows when anyone has vetoed this cuisine */}
-                    {count > 0 && (
-                      <span className={[
-                        "ml-1 text-xs font-normal",
-                        selected ? "text-red-400" : "text-gray-500",
-                      ].join(" ")}>
+                    {/* Count badge — shows when multiple people have vetoed */}
+                    {count > 1 && (
+                      <span className="ml-1 text-xs font-normal opacity-60">
                         ({count})
                       </span>
                     )}

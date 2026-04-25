@@ -23,6 +23,7 @@ import PreferencesScreen from "@/components/PreferencesScreen";
 import SwipeScreen from "@/components/SwipeScreen";
 import WaitingScreen from "@/components/WaitingScreen";
 import AnticipationScreen from "@/components/AnticipationScreen";
+import GeneratingStackScreen from "@/components/GeneratingStackScreen";
 import SummaryScreen from "@/components/SummaryScreen";
 
 export default function SessionPage() {
@@ -161,6 +162,15 @@ export default function SessionPage() {
         sessionId={sessionId}
         session={session}
         participantId={participantId}
+      />
+    );
+  }
+
+  if (session.phase === "generating-stack") {
+    return (
+      <GeneratingStackScreen
+        sessionId={sessionId}
+        isCreator={session.creatorId === participantId}
       />
     );
   }

@@ -64,7 +64,7 @@ export default function DietaryScreen({ sessionId, session, participantId }: Pro
     const allDone = allIds.every((id) => current[id] === true);
 
     if (allDone) {
-      await set(ref(db, `sessions/${sessionId}/phase`), "swipe");
+      await set(ref(db, `sessions/${sessionId}/phase`), "generating-stack");
     }
   }
 
@@ -125,13 +125,14 @@ export default function DietaryScreen({ sessionId, session, participantId }: Pro
         {/* ── WAITING STATE ── */}
         {iAmDone && (
           <>
-            <div className="bg-gray-800 rounded-2xl p-4 text-center">
+            <div className="text-center space-y-1">
+              <h2 className="text-2xl font-semibold">You&apos;re all set.</h2>
               <p className="text-gray-400 text-sm">
-                Waiting for the others...
+                Everything&apos;s locked in — your stack is on the way.
               </p>
             </div>
 
-            {/* Who's done — names only, no selections shown */}
+            {/* Who's ready — names only, no selections shown */}
             <div className="space-y-2">
               {participants.map(([id, participant]) => {
                 const done = !!dietaryDone[id] || (id === participantId && submitted);
@@ -153,10 +154,6 @@ export default function DietaryScreen({ sessionId, session, participantId }: Pro
                 );
               })}
             </div>
-
-            <p className="text-center text-gray-500 text-xs">
-              No one will see what anyone selected here.
-            </p>
           </>
         )}
 

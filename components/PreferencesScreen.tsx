@@ -208,20 +208,18 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
                       vetoed
                         ? "bg-gray-900 text-gray-700 line-through cursor-not-allowed"
                         : iMine
-                        ? "bg-white text-gray-950 cursor-pointer"      // my pick — most prominent
-                        : othersCount > 0 && !iAmDone
-                        ? "bg-gray-700 text-gray-200 cursor-pointer"   // others picked, I haven't — mid
-                        : othersCount > 0 && iAmDone
-                        ? "bg-gray-700 text-gray-200 cursor-default"   // others picked, I'm locked
+                        ? "bg-white text-gray-950 cursor-pointer"                          // my pick — most prominent
+                        : othersCount > 0
+                        ? "bg-gray-700 text-gray-100 border border-white/20 " + (iAmDone ? "cursor-default" : "cursor-pointer") // others picked — semi-selected
                         : atMax || iAmDone
                         ? "bg-gray-800 text-gray-600 cursor-default"
                         : "bg-gray-800 text-gray-300 hover:bg-gray-700 cursor-pointer",
                     ].join(" ")}
                   >
                     {cuisine.label}
-                    {/* Count badge — shows how many OTHERS picked this tile */}
-                    {othersCount > 0 && (
-                      <span className="ml-1 text-xs font-normal text-gray-400">
+                    {/* Count badge — shows when multiple others picked this tile */}
+                    {othersCount > 1 && (
+                      <span className="ml-1 text-xs font-normal text-white/40">
                         ({othersCount})
                       </span>
                     )}
