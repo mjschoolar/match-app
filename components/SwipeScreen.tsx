@@ -336,11 +336,17 @@ export default function SwipeScreen({ sessionId, session, participantId }: Props
         {/* ── Card stack area — fills available height ── */}
         <div className="relative w-full flex-1 min-h-0">
 
-          {/* Peek card — the next card sits slightly behind and below */}
+          {/* Peek card — shows the real next card's photo so there's no grey flash on advance */}
           {nextCard && (
             <div
               className="absolute inset-0 rounded-3xl bg-gray-800"
-              style={{ transform: "scale(0.95) translateY(10px)", zIndex: 0 }}
+              style={{
+                transform: "scale(0.95) translateY(10px)",
+                zIndex: 0,
+                backgroundImage: `url(${nextCard.image})`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+              }}
             />
           )}
 
