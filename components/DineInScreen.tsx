@@ -81,24 +81,23 @@ export default function DineInScreen({ sessionId, session, participantId }: Prop
         {!isReveal && (
           <>
             <div className="grid grid-cols-2 gap-3">
-              {/* Dine in button — highlights if this participant chose it */}
+              {/* Dine in button */}
               <button
                 onClick={() => handleVote("dine-in")}
                 disabled={!!myResponse}
                 className={[
                   "py-5 rounded-2xl font-semibold text-lg touch-manipulation transition-colors",
                   myResponse === "dine-in"
-                    ? "bg-white text-gray-950 cursor-default"
+                    ? "bg-white text-gray-950 cursor-default"                              // my pick
                     : myResponse
-                    ? "bg-gray-800 text-gray-600 cursor-default"
-                    : "bg-gray-800 hover:bg-gray-700 active:bg-gray-600 text-white cursor-pointer",
+                    ? "bg-gray-800 text-gray-600 cursor-default"                           // I voted elsewhere
+                    : dineInCount > 0
+                    ? "bg-gray-700 text-gray-100 border border-white/20 cursor-pointer"    // others picked it
+                    : "bg-gray-800 text-white hover:bg-gray-700 cursor-pointer",           // nobody yet
                 ].join(" ")}
               >
                 Dine in
-                <span className={[
-                  "ml-2 text-sm font-normal",
-                  myResponse === "dine-in" ? "text-gray-500" : "text-gray-500",
-                ].join(" ")}>
+                <span className="ml-2 text-sm font-normal opacity-50">
                   ({dineInCount})
                 </span>
               </button>
@@ -113,14 +112,13 @@ export default function DineInScreen({ sessionId, session, participantId }: Prop
                     ? "bg-white text-gray-950 cursor-default"
                     : myResponse
                     ? "bg-gray-800 text-gray-600 cursor-default"
-                    : "bg-gray-800 hover:bg-gray-700 active:bg-gray-600 text-white cursor-pointer",
+                    : deliveryCount > 0
+                    ? "bg-gray-700 text-gray-100 border border-white/20 cursor-pointer"
+                    : "bg-gray-800 text-white hover:bg-gray-700 cursor-pointer",
                 ].join(" ")}
               >
                 Delivery
-                <span className={[
-                  "ml-2 text-sm font-normal",
-                  myResponse === "delivery" ? "text-gray-500" : "text-gray-500",
-                ].join(" ")}>
+                <span className="ml-2 text-sm font-normal opacity-50">
                   ({deliveryCount})
                 </span>
               </button>

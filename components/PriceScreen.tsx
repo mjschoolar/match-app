@@ -108,8 +108,9 @@ export default function PriceScreen({ sessionId, session, participantId }: Props
             <div className="grid grid-cols-4 gap-2">
               {PRICE_TIERS.map((tier) => {
                 const isMyPick = myResponse === tier;
-                const isOtherPick = myResponse && !isMyPick;
+                const isOtherPick = myResponse && !isMyPick; // I voted but not this tier
                 const count = tierCount(tier);
+                const othersPickedThis = !myResponse && count > 0; // others picked, I haven't voted
 
                 return (
                   <button
@@ -119,17 +120,16 @@ export default function PriceScreen({ sessionId, session, participantId }: Props
                     className={[
                       "py-5 rounded-2xl font-semibold text-lg touch-manipulation transition-colors flex flex-col items-center gap-1",
                       isMyPick
-                        ? "bg-white text-gray-950 cursor-default"
+                        ? "bg-white text-gray-950 cursor-default"                           // my pick
                         : isOtherPick
-                        ? "bg-gray-800 text-gray-600 cursor-default"
-                        : "bg-gray-800 hover:bg-gray-700 active:bg-gray-600 text-white cursor-pointer",
+                        ? "bg-gray-800 text-gray-600 cursor-default"                        // I voted elsewhere
+                        : othersPickedThis
+                        ? "bg-gray-700 text-gray-100 border border-white/20 cursor-pointer" // others picked it
+                        : "bg-gray-800 text-white hover:bg-gray-700 cursor-pointer",        // nobody yet
                     ].join(" ")}
                   >
                     <span>{tier}</span>
-                    <span className={[
-                      "text-xs font-normal",
-                      isMyPick ? "text-gray-500" : "text-gray-500",
-                    ].join(" ")}>
+                    <span className="text-xs font-normal opacity-50">
                       {count > 0 ? count : "·"}
                     </span>
                   </button>
