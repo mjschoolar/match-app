@@ -121,7 +121,11 @@ function SwipeCard({
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
         className="w-full h-full rounded-3xl bg-gray-800 overflow-hidden relative touch-none select-none"
+        style={{ backgroundImage: `url(${card.image})`, backgroundSize: "cover", backgroundPosition: "center" }}
       >
+        {/* Dark gradient — ensures text is readable over the photo */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent pointer-events-none z-0" />
+
         {/* Directional tint — faint red (left) or green (right) wash */}
         <div
           className="absolute inset-0 rounded-3xl pointer-events-none z-10 transition-colors duration-75"
