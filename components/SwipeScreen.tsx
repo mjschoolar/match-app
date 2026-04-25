@@ -336,10 +336,10 @@ export default function SwipeScreen({ sessionId, session, participantId }: Props
         {/* ── Card stack area — fills available height ── */}
         <div className="relative w-full flex-1 min-h-0">
 
-          {/* Peek card — shows the real next card's photo so there's no grey flash on advance */}
+          {/* Peek card — photo + gradient, no content (content reveals when the card rises) */}
           {nextCard && (
             <div
-              className="absolute inset-0 rounded-3xl bg-gray-800"
+              className="absolute inset-0 rounded-3xl bg-gray-800 overflow-hidden"
               style={{
                 transform: "scale(0.95) translateY(10px)",
                 zIndex: 0,
@@ -347,7 +347,9 @@ export default function SwipeScreen({ sessionId, session, participantId }: Props
                 backgroundSize: "cover",
                 backgroundPosition: "center",
               }}
-            />
+            >
+              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
+            </div>
           )}
 
           {/* Active card — key remounts on each new card so the advance animation fires */}
