@@ -31,3 +31,15 @@ button {
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
 }
+
+/* Swipe card: rises from peek position when a new card advances to the top */
+@keyframes cardAdvance {
+  from {
+    transform: scale(0.95) translateY(10px);
+    opacity: 0.85;
+  }
+  to {
+    transform: translate(0px, 0px) scale(1);
+    opacity: 1;
+  }
+}
