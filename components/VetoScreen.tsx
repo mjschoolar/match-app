@@ -1,16 +1,15 @@
 "use client";
 // VetoScreen — Pre-swipe step 4 of 6.
 //
-// The first screen where everyone can see each other's actions in real time
-// as they happen — not just after. As each person taps a cuisine off, it
-// appears immediately on everyone else's screen.
-//
-// Two internal states:
-//   phase === "veto"        → grid + live attribution list + Done button
-//   phase === "veto-reveal" → grouped summary of who vetoed what + creator Continue
+// V2 changes:
+//   - During voting: tiles show a count badge (how many picked it) but no names.
+//     Attribution appears only at the reveal.
+//   - Removed the live named-attribution list. Replaced with a simple
+//     "N of X done" completion indicator.
+//   - Reveal is unchanged — full attribution still shown there.
 //
 // Why vetoDone exists: Firebase can't store an empty array (it treats it as
-// null and removes the node). Without a separate "done" flag, we can't tell
+// null and removes the node). Without a separate "done" flag we can't tell
 // the difference between "chose no vetoes" and "hasn't responded yet".
 
 import { useState } from "react";
@@ -29,15 +28,25 @@ export default function VetoScreen({ sessionId, session, participantId }: Props)
   const isReveal = session.phase === "veto-reveal";
   const isCreator = session.creatorId === participantId;
   const participants = Object.entries(session.participants || {});
+  const totalParticipants = participants.length;
   const vetoResponses = session.responses?.veto || {};
   const vetoDone = session.responses?.vetoDone || {};
   const iAmDone = !!vetoDone[participantId];
   const creatorName = session.participants[session.creatorId]?.name ?? "the host";
 
+  const totalDone = Object.values(vetoDone).filter(Boolean).length;
+
   // Local state keeps the grid snappy — taps feel instant while Firebase syncs
   const [selections, setSelections] = useState<string[]>(
     Array.isArray(vetoResponses[participantId]) ? vetoResponses[participantId] : []
   );
+
+  // How many participants have vetoed a given cuisine (for count badges)
+  function vetoCountFor(cuisineId: string): number {
+    return Object.values(vetoResponses).filter(
+      (v) => Array.isArray(v) && v.includes(cuisineId)
+    ).length;
+  }
 
   function toggleCuisine(cuisineId: string) {
     if (iAmDone || isReveal) return;
@@ -48,7 +57,7 @@ export default function VetoScreen({ sessionId, session, participantId }: Props)
 
     setSelections(next);
 
-    // Write live to Firebase so others see it immediately.
+    // Write live to Firebase so others see count updates immediately.
     // If empty, remove the node — Firebase can't store [].
     const vetoRef = ref(db, `sessions/${sessionId}/responses/veto/${participantId}`);
     if (next.length > 0) {
@@ -59,7 +68,6 @@ export default function VetoScreen({ sessionId, session, participantId }: Props)
   }
 
   async function handleDone() {
-    // Mark this participant as done
     await set(
       ref(db, `sessions/${sessionId}/responses/vetoDone/${participantId}`),
       true
@@ -94,15 +102,8 @@ export default function VetoScreen({ sessionId, session, participantId }: Props)
     return byCuisine;
   }
 
-  // Get the label for a cuisine ID
   function cuisineLabel(id: string): string {
     return CUISINES.find((c) => c.id === id)?.label ?? id;
-  }
-
-  // For the live attribution list: what has each participant vetoed so far?
-  function getParticipantVetoes(pid: string): string[] {
-    const v = vetoResponses[pid];
-    return Array.isArray(v) ? v : [];
   }
 
   const revealByCuisine = isReveal ? getRevealByCuisine() : {};
@@ -118,7 +119,7 @@ export default function VetoScreen({ sessionId, session, participantId }: Props)
           </h2>
           {!isReveal && (
             <p className="text-gray-400 text-sm text-center mt-1">
-              Tap anything you don&apos;t want tonight. Everyone can see your picks.
+              Tap anything you don&apos;t want tonight.
             </p>
           )}
         </div>
@@ -126,59 +127,49 @@ export default function VetoScreen({ sessionId, session, participantId }: Props)
         {/* ── VOTING STATE ── */}
         {!isReveal && (
           <>
-            {/* Cuisine grid — 3 columns, tap to toggle */}
+            {/* Cuisine grid — tiles show count badges, not names */}
             <div className="grid grid-cols-3 gap-2">
               {CUISINES.map((cuisine) => {
                 const selected = selections.includes(cuisine.id);
+                const count = vetoCountFor(cuisine.id);
+
                 return (
                   <button
                     key={cuisine.id}
                     onClick={() => toggleCuisine(cuisine.id)}
                     disabled={iAmDone}
-                    className={`py-3 px-2 rounded-xl text-sm font-medium cursor-pointer touch-manipulation transition-colors
-                      ${selected
+                    className={[
+                      "py-3 px-2 rounded-xl text-sm font-medium touch-manipulation transition-colors relative",
+                      selected
                         ? "bg-red-500/20 text-red-300 border border-red-500/40"
-                        : "bg-gray-800 text-gray-300 hover:bg-gray-700"
-                      }
-                      ${iAmDone ? "opacity-50" : ""}
-                    `}
+                        : "bg-gray-800 text-gray-300 hover:bg-gray-700",
+                      iAmDone ? "opacity-60 cursor-default" : "cursor-pointer",
+                    ].join(" ")}
                   >
                     {selected && <span className="mr-1">✕</span>}
                     {cuisine.label}
+                    {/* Count badge — shows when anyone has vetoed this cuisine */}
+                    {count > 0 && (
+                      <span className={[
+                        "ml-1 text-xs font-normal",
+                        selected ? "text-red-400" : "text-gray-500",
+                      ].join(" ")}>
+                        ({count})
+                      </span>
+                    )}
                   </button>
                 );
               })}
             </div>
 
-            {/* Live attribution list — who has vetoed what */}
-            <div className="space-y-2">
-              {participants.map(([id, participant]) => {
-                const vetoes = getParticipantVetoes(id);
-                const done = !!vetoDone[id];
-                return (
-                  <div key={id} className="bg-gray-800 rounded-xl px-4 py-3">
-                    <span className="font-medium">
-                      {participant.name}
-                      {id === participantId && (
-                        <span className="text-gray-500 font-normal"> (you)</span>
-                      )}
-                      {done && <span className="text-green-400 text-xs ml-2">✓ done</span>}
-                    </span>
-                    {vetoes.length > 0 ? (
-                      <p className="text-sm text-red-300 mt-0.5">
-                        {vetoes.map((id) => cuisineLabel(id)).join(", ")}
-                      </p>
-                    ) : (
-                      <p className="text-sm text-gray-500 mt-0.5">
-                        {done ? "No vetoes" : "..."}
-                      </p>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+            {/* Completion progress — no attribution, just a count */}
+            <p className="text-center text-sm text-gray-400">
+              {iAmDone
+                ? `Done ✓  ·  ${totalDone} of ${totalParticipants} finished`
+                : `${totalDone} of ${totalParticipants} finished`}
+            </p>
 
-            {/* Done button */}
+            {/* Done button — hidden after submitting */}
             {!iAmDone && (
               <button
                 onClick={handleDone}
@@ -189,16 +180,10 @@ export default function VetoScreen({ sessionId, session, participantId }: Props)
                   : "Nothing to veto — I'm good"}
               </button>
             )}
-
-            {iAmDone && (
-              <p className="text-center text-gray-400 text-sm">
-                You&apos;re done — waiting for the others...
-              </p>
-            )}
           </>
         )}
 
-        {/* ── REVEAL STATE ── */}
+        {/* ── REVEAL STATE — full attribution ── */}
         {isReveal && (
           <>
             {vetoedCuisines.length === 0 ? (

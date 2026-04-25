@@ -2,22 +2,26 @@
 // PreferencesScreen — Pre-swipe step 5 of 6.
 //
 // Three internal states, one component:
+//   phase === "preferences"        → grid selection (accumulation visible, up to 3 picks)
+//   phase === "preferences"        → waiting state after locking in (grid still visible)
+//   phase === "preferences-reveal" → simultaneous three-zone reveal on all devices
 //
-//   phase === "preferences"        → private grid selection (up to 3)
-//   phase === "preferences"        → waiting state (after locking in)
-//   phase === "preferences-reveal" → simultaneous reveal on all devices at once
-//
-// Key mechanic: selections are fully private during voting. Nobody sees
-// anyone else's choices. When the last person locks in, Firebase writes
-// "preferences-reveal" — every device gets that update simultaneously
-// and renders the reveal at the exact same moment.
+// V2 changes:
+//   - Selections write to Firebase on every tap (not just on lock-in) so tile
+//     counts accumulate live for everyone to see — same pattern as veto.
+//   - Tile visual hierarchy: your picks (most prominent) → others' picks (count badge,
+//     less prominent) → no picks (default).
+//   - After locking in: grid stays visible in locked state with the hierarchy intact.
+//     Completion list shown below (who's done ✓ vs still going ...).
+//   - Reveal: three zones — shared (2+ people), solo (1 person), open to anything.
+//     Every participant appears. No one is invisible.
 //
 // The reveal is personalised: each device shows "You" for their own picks
 // and actual names for everyone else's.
 
 import { useState } from "react";
 import { db } from "@/lib/firebase";
-import { ref, set, get } from "firebase/database";
+import { ref, set, get, remove } from "firebase/database";
 import { Session } from "@/lib/types";
 import { CUISINES } from "@/lib/constants";
 
@@ -28,45 +32,63 @@ interface Props {
 }
 
 export default function PreferencesScreen({ sessionId, session, participantId }: Props) {
-  const [selections, setSelections] = useState<string[]>([]);
   const [lockedIn, setLockedIn] = useState(false);
 
   const isReveal = session.phase === "preferences-reveal";
   const isCreator = session.creatorId === participantId;
   const participants = Object.entries(session.participants || {});
+  const totalParticipants = participants.length;
   const prefResponses = session.responses?.preferences || {};
   const preferencesDone = session.responses?.preferencesDone || {};
   const creatorName = session.participants[session.creatorId]?.name ?? "the host";
-  const totalParticipants = participants.length;
 
-  // Collect all vetoed cuisines from the veto step — these are greyed out here
+  // Collect all vetoed cuisines — greyed out and unselectable
   const vetoResponses = session.responses?.veto || {};
   const allVetoed = new Set<string>(
     Object.values(vetoResponses).flatMap((v) => (Array.isArray(v) ? v : []))
   );
 
+  // Local state for instant tap feedback — Firebase data used for count badges
+  const [localSelections, setLocalSelections] = useState<string[]>(() =>
+    Array.isArray(prefResponses[participantId]) ? prefResponses[participantId] : []
+  );
+
   const iAmDone = lockedIn || !!preferencesDone[participantId];
+
+  // How many OTHER participants (not me) have selected a given cuisine
+  // Used for the count badge — doesn't reveal your own picks to yourself
+  function othersPickCountFor(cuisineId: string): number {
+    return Object.entries(prefResponses)
+      .filter(([pid, v]) => pid !== participantId && Array.isArray(v) && (v as string[]).includes(cuisineId))
+      .length;
+  }
 
   function toggleCuisine(id: string) {
     if (iAmDone || isReveal || allVetoed.has(id)) return;
 
-    setSelections((prev) => {
-      if (prev.includes(id)) return prev.filter((s) => s !== id);
-      if (prev.length >= 3) return prev; // hard cap at 3
-      return [...prev, id];
-    });
+    const isSelected = localSelections.includes(id);
+
+    // Enforce 3-pick cap
+    if (!isSelected && localSelections.length >= 3) return;
+
+    const next = isSelected
+      ? localSelections.filter((s) => s !== id)
+      : [...localSelections, id];
+
+    // Update local state instantly — feels snappy, no Firebase round-trip lag
+    setLocalSelections(next);
+
+    // Write to Firebase in background — others see count updates
+    const prefRef = ref(db, `sessions/${sessionId}/responses/preferences/${participantId}`);
+    if (next.length > 0) {
+      set(prefRef, next);
+    } else {
+      remove(prefRef);
+    }
   }
 
   async function handleLockIn() {
     setLockedIn(true);
-
-    // Write selections if non-empty (Firebase drops empty arrays)
-    if (selections.length > 0) {
-      await set(
-        ref(db, `sessions/${sessionId}/responses/preferences/${participantId}`),
-        selections
-      );
-    }
 
     // Mark as done
     await set(
@@ -74,8 +96,7 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
       true
     );
 
-    // Fresh read to avoid race condition — if two people lock in simultaneously,
-    // stale local state would cause both to see only themselves as done.
+    // Fresh read to avoid race condition
     const allIds = Object.keys(session.participants || {});
     const snap = await get(ref(db, `sessions/${sessionId}/responses/preferencesDone`));
     const current = snap.val() || {};
@@ -86,13 +107,14 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
     }
   }
 
-  async function handleStartSwipe() {
+  async function handleAdvance() {
     await set(ref(db, `sessions/${sessionId}/phase`), "dietary");
   }
 
-  // Build reveal data: shared picks (2+ people) and solo picks (1 person)
+  // ── Reveal data helpers ──────────────────────────────────────────────────
+
   function getRevealData() {
-    const counts: Record<string, string[]> = {}; // cuisineId → [participantIds]
+    const counts: Record<string, string[]> = {}; // cuisineId → [participantIds who picked it]
     for (const [pid, prefs] of Object.entries(prefResponses)) {
       if (!Array.isArray(prefs)) continue;
       for (const cuisineId of prefs) {
@@ -109,101 +131,119 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
       else solo.push({ cuisineId, pid: pids[0] });
     }
 
-    return { shared, solo };
+    // Participants who made no selection at all
+    const pickedAnything = new Set(
+      Object.entries(prefResponses)
+        .filter(([, v]) => Array.isArray(v) && (v as string[]).length > 0)
+        .map(([pid]) => pid)
+    );
+    const openToAnything = participants
+      .filter(([id]) => !pickedAnything.has(id))
+      .map(([id]) => id);
+
+    return { shared, solo, openToAnything };
   }
 
   function cuisineLabel(id: string) {
     return CUISINES.find((c) => c.id === id)?.label ?? id;
   }
 
-  // Show "You" for this device's participant, real names for everyone else
   function displayName(pid: string) {
     return pid === participantId ? "You" : session.participants[pid]?.name ?? pid;
   }
 
-  // Shared section header — adapts to group size vs how many agreed
-  function sharedHeader(count: number) {
-    if (count === totalParticipants) return "You all want this";
+  function sharedHeader(pidsLength: number) {
+    if (pidsLength === totalParticipants) return "You all want this";
     if (totalParticipants === 2) return "You both want this";
     return "Some of you want this";
   }
 
-  const { shared, solo } = isReveal ? getRevealData() : { shared: [], solo: [] };
+  const { shared, solo, openToAnything } = isReveal
+    ? getRevealData()
+    : { shared: [], solo: [], openToAnything: [] };
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center p-8 bg-gray-950 text-white">
       <div className="max-w-sm w-full space-y-6">
 
-        {/* ── SELECTION STATE ── */}
-        {!isReveal && !iAmDone && (
+        {/* ── SELECTION + WAITING STATE ── */}
+        {!isReveal && (
           <>
             <div>
               <h2 className="text-2xl font-semibold text-center leading-snug">
                 What are you feeling tonight?
               </h2>
               <p className="text-gray-400 text-sm text-center mt-1">
-                Pick up to 3. Only you can see this.
+                {iAmDone
+                  ? "Locked in ✓"
+                  : "Pick up to 3. Only you can see which are yours."}
               </p>
             </div>
 
             {/* Selection counter */}
-            <p className="text-center text-sm text-gray-400">
-              {selections.length === 0 && "Nothing selected yet"}
-              {selections.length === 1 && "1 of 3 picked"}
-              {selections.length === 2 && "2 of 3 picked"}
-              {selections.length === 3 && "3 of 3 — locked and loaded"}
-            </p>
+            {!iAmDone && (
+              <p className="text-center text-sm text-gray-400">
+                {localSelections.length === 0 && "Nothing selected yet"}
+                {localSelections.length === 1 && "1 of 3 picked"}
+                {localSelections.length === 2 && "2 of 3 picked"}
+                {localSelections.length === 3 && "3 of 3 — locked and loaded"}
+              </p>
+            )}
 
-            {/* Cuisine grid */}
+            {/* Cuisine grid — accumulation visible */}
             <div className="grid grid-cols-3 gap-2">
               {CUISINES.map((cuisine) => {
                 const vetoed = allVetoed.has(cuisine.id);
-                const selected = selections.includes(cuisine.id);
-                const atMax = selections.length >= 3 && !selected;
+                const iMine = localSelections.includes(cuisine.id);
+                const othersCount = othersPickCountFor(cuisine.id);
+                const atMax = !iMine && localSelections.length >= 3;
 
                 return (
                   <button
                     key={cuisine.id}
                     onClick={() => toggleCuisine(cuisine.id)}
-                    disabled={vetoed || atMax}
+                    disabled={vetoed || (atMax && !iAmDone) || iAmDone}
                     className={[
                       "py-3 px-2 rounded-xl text-sm font-medium transition-colors touch-manipulation",
                       vetoed
                         ? "bg-gray-900 text-gray-700 line-through cursor-not-allowed"
-                        : selected
-                        ? "bg-white text-gray-950 cursor-pointer"
-                        : atMax
-                        ? "bg-gray-800 text-gray-600 cursor-not-allowed"
+                        : iMine
+                        ? "bg-white text-gray-950 cursor-pointer"      // my pick — most prominent
+                        : othersCount > 0 && !iAmDone
+                        ? "bg-gray-700 text-gray-200 cursor-pointer"   // others picked, I haven't — mid
+                        : othersCount > 0 && iAmDone
+                        ? "bg-gray-700 text-gray-200 cursor-default"   // others picked, I'm locked
+                        : atMax || iAmDone
+                        ? "bg-gray-800 text-gray-600 cursor-default"
                         : "bg-gray-800 text-gray-300 hover:bg-gray-700 cursor-pointer",
                     ].join(" ")}
                   >
                     {cuisine.label}
+                    {/* Count badge — shows how many OTHERS picked this tile */}
+                    {othersCount > 0 && (
+                      <span className="ml-1 text-xs font-normal text-gray-400">
+                        ({othersCount})
+                      </span>
+                    )}
                   </button>
                 );
               })}
             </div>
 
-            <button
-              onClick={handleLockIn}
-              className="w-full py-4 bg-white text-gray-950 rounded-2xl font-semibold text-lg cursor-pointer touch-manipulation"
-            >
-              {selections.length === 0 ? "Anything works for me" : "Lock in"}
-            </button>
-          </>
-        )}
+            {/* Lock in button — only shown before locking in */}
+            {!iAmDone && (
+              <button
+                onClick={handleLockIn}
+                className="w-full py-4 bg-white text-gray-950 rounded-2xl font-semibold text-lg cursor-pointer touch-manipulation"
+              >
+                {localSelections.length === 0 ? "Anything works for me" : "Lock in"}
+              </button>
+            )}
 
-        {/* ── WAITING STATE (after locking in, before reveal fires) ── */}
-        {!isReveal && iAmDone && (
-          <>
-            <div className="text-center space-y-1">
-              <h2 className="text-2xl font-semibold">You&apos;re locked in.</h2>
-              <p className="text-gray-400 text-sm">Waiting for the others...</p>
-            </div>
-
+            {/* Completion list — who's done vs still going */}
             <div className="space-y-2">
               {participants.map(([id, participant]) => {
-                const done =
-                  !!preferencesDone[id] || (id === participantId && lockedIn);
+                const done = !!preferencesDone[id] || (id === participantId && lockedIn);
                 return (
                   <div
                     key={id}
@@ -225,10 +265,10 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
           </>
         )}
 
-        {/* ── REVEAL STATE — fires simultaneously on all devices ── */}
+        {/* ── REVEAL STATE — three zones, fires simultaneously on all devices ── */}
         {isReveal && (
           <>
-            {/* Shared picks */}
+            {/* Zone 1: Shared picks (2+ people) */}
             {shared.length > 0 && (
               <div className="space-y-2">
                 <p className="text-xs text-gray-400 text-center uppercase tracking-widest">
@@ -248,7 +288,7 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
               </div>
             )}
 
-            {/* Solo picks */}
+            {/* Zone 2: Solo picks (exactly 1 person) */}
             {solo.length > 0 && (
               <div className="space-y-2">
                 <p className="text-xs text-gray-400 text-center uppercase tracking-widest mt-2">
@@ -266,24 +306,39 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
               </div>
             )}
 
-            {/* Nobody picked anything */}
-            {shared.length === 0 && solo.length === 0 && (
+            {/* Zone 3: Open to anything — participants who made no selection */}
+            {openToAnything.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-400 text-center uppercase tracking-widest mt-2">
+                  Open to anything
+                </p>
+                <div className="bg-gray-800 rounded-xl px-4 py-3">
+                  <span className="text-gray-300 text-sm">
+                    {openToAnything.map(displayName).join(", ")}
+                  </span>
+                  <p className="text-gray-500 text-xs mt-0.5">open to anything tonight</p>
+                </div>
+              </div>
+            )}
+
+            {/* Fallback: nobody picked anything */}
+            {shared.length === 0 && solo.length === 0 && openToAnything.length === 0 && (
               <p className="text-center text-gray-400">
                 No preferences — anything goes tonight.
               </p>
             )}
 
-            {/* Advance to swipe — creator only */}
+            {/* Advance to dietary — creator only */}
             {isCreator ? (
               <button
-                onClick={handleStartSwipe}
+                onClick={handleAdvance}
                 className="w-full py-4 bg-white text-gray-950 rounded-2xl font-semibold text-lg cursor-pointer touch-manipulation mt-2"
               >
                 Let&apos;s find out
               </button>
             ) : (
               <p className="text-center text-gray-400 text-sm">
-                Waiting for {creatorName} to start the swipe...
+                Waiting for {creatorName} to continue...
               </p>
             )}
           </>
