@@ -77,7 +77,7 @@ export default function VetoScreen({ sessionId, session, participantId }: Props)
   }
 
   async function handleContinue() {
-    await set(ref(db, `sessions/${sessionId}/phase`), "dietary");
+    await set(ref(db, `sessions/${sessionId}/phase`), "preferences");
   }
 
   // For the reveal: build a map of cuisineId → [names who vetoed it]

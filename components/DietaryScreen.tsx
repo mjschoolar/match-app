@@ -1,11 +1,11 @@
 "use client";
-// DietaryScreen — Pre-swipe step 5 of 6.
+// DietaryScreen — Pre-swipe step 6 of 6.
 //
 // A quiet private moment between the app and each participant individually.
 // Nobody sees anyone else's selections — not during, not after. Ever.
 //
 // There is no reveal phase for dietary. When everyone has submitted,
-// the phase jumps straight to "preferences".
+// the phase jumps straight to "swipe".
 //
 // The waiting state shows who has finished (✓) vs who hasn't (...),
 // but shows nothing about what anyone selected.
@@ -64,7 +64,7 @@ export default function DietaryScreen({ sessionId, session, participantId }: Pro
     const allDone = allIds.every((id) => current[id] === true);
 
     if (allDone) {
-      await set(ref(db, `sessions/${sessionId}/phase`), "preferences");
+      await set(ref(db, `sessions/${sessionId}/phase`), "swipe");
     }
   }
 

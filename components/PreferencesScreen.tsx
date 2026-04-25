@@ -1,5 +1,5 @@
 "use client";
-// PreferencesScreen — Pre-swipe step 6 of 6.
+// PreferencesScreen — Pre-swipe step 5 of 6.
 //
 // Three internal states, one component:
 //
@@ -87,7 +87,7 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
   }
 
   async function handleStartSwipe() {
-    await set(ref(db, `sessions/${sessionId}/phase`), "swipe");
+    await set(ref(db, `sessions/${sessionId}/phase`), "dietary");
   }
 
   // Build reveal data: shared picks (2+ people) and solo picks (1 person)
