@@ -198,11 +198,6 @@ export default function SwipeScreen({ sessionId, session, participantId }: Props
   const [drag,       setDrag]       = useState({ x: 0, y: 0 });
   const [animPhase,  setAnimPhase]  = useState<AnimPhase>("idle");
 
-  // Preload all restaurant images on mount so cards appear instantly
-  useEffect(() => {
-    RESTAURANTS.forEach((r) => { new Image().src = r.image; });
-  }, []);
-
   // Touch tracking — stored in refs so updates don't trigger renders
   const touchStartRef   = useRef<{ x: number; y: number } | null>(null);
   const hasDraggedRef   = useRef(false);

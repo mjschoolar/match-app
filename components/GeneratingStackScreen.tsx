@@ -11,6 +11,7 @@
 import { useEffect } from "react";
 import { db } from "@/lib/firebase";
 import { ref, set } from "firebase/database";
+import { RESTAURANTS } from "@/lib/constants";
 
 interface Props {
   sessionId: string;
@@ -18,6 +19,12 @@ interface Props {
 }
 
 export default function GeneratingStackScreen({ sessionId, isCreator }: Props) {
+  // Preload all card images during the 2.5s window so the swipe stack is ready instantly.
+  // When real restaurant data is introduced, this is the natural place to fetch and cache it.
+  useEffect(() => {
+    RESTAURANTS.forEach((r) => { new Image().src = r.image; });
+  }, []);
+
   useEffect(() => {
     if (!isCreator) return;
 
