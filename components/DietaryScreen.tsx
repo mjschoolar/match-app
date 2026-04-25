@@ -64,6 +64,7 @@ export default function DietaryScreen({ sessionId, session, participantId }: Pro
     const allDone = allIds.every((id) => current[id] === true);
 
     if (allDone) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
       await set(ref(db, `sessions/${sessionId}/phase`), "generating-stack");
     }
   }
@@ -76,18 +77,17 @@ export default function DietaryScreen({ sessionId, session, participantId }: Pro
     <main className="min-h-screen flex flex-col items-center justify-center p-8 bg-gray-950 text-white">
       <div className="max-w-sm w-full space-y-6">
 
-        <div>
-          <h2 className="text-2xl font-semibold text-center leading-snug">
-            Anything we should know for the stack?
-          </h2>
-          <p className="text-gray-400 text-sm text-center mt-1">
-            Private — nobody else will see this.
-          </p>
-        </div>
-
         {/* ── SELECTION STATE ── */}
         {!iAmDone && (
           <>
+            <div>
+              <h2 className="text-2xl font-semibold text-center leading-snug">
+                Anything we should know for the stack?
+              </h2>
+              <p className="text-gray-400 text-sm text-center mt-1">
+                Private — nobody else will see this.
+              </p>
+            </div>
             <div className="space-y-2">
               {DIETARY.map((item) => {
                 const selected = selections.includes(item.id);
