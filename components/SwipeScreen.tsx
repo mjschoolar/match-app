@@ -34,7 +34,7 @@ const MAX_TILT_DEG      = 10;        // tilt capped at ±10°
 const Y_DAMPEN          = 0.25;      // vertical follow: 25% of actual finger travel
 const TAP_THRESHOLD_PX  = 8;        // travel below this = tap, not drag
 const TINT_MAX_OPACITY  = 0.18;     // maximum color wash opacity (very subtle)
-const COMMIT_RATIO      = 0.45;     // swipe commits at 45% of card width
+const COMMIT_RATIO      = 0.20;     // swipe commits at 20% of card width — testing the easy floor
 const EXIT_MS           = 280;      // exit animation duration
 const SNAP_MS           = 420;      // snap-back animation duration
 
