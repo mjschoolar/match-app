@@ -123,13 +123,24 @@ export default function SwipeScreen({ sessionId, session, participantId }: Props
     <main className="min-h-screen flex flex-col items-center justify-center p-6 bg-gray-950 text-white">
       <div className="max-w-sm w-full space-y-5">
 
-        {/* Restaurant card */}
-        <div className="bg-gray-800 rounded-2xl p-6 space-y-4">
+        {/* Restaurant card — tap anywhere to toggle depth layer */}
+        <div
+          onClick={() => setExpanded((e) => !e)}
+          className="bg-gray-800 rounded-2xl p-6 space-y-4 cursor-pointer touch-manipulation select-none"
+        >
 
-          {/* Main info */}
-          <div>
-            <h2 className="text-2xl font-bold">{currentCard.name}</h2>
-            <p className="text-gray-400 mt-0.5">{currentCard.cuisine}</p>
+          {/* Main info + expand indicator */}
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-2xl font-bold">{currentCard.name}</h2>
+              <p className="text-gray-400 mt-0.5">{currentCard.cuisine}</p>
+            </div>
+            <span className={[
+              "text-gray-500 text-lg flex-shrink-0 mt-1 transition-transform duration-200",
+              expanded ? "rotate-180" : "",
+            ].join(" ")}>
+              ↓
+            </span>
           </div>
 
           <div className="flex items-center gap-3 text-sm">
@@ -138,14 +149,6 @@ export default function SwipeScreen({ sessionId, session, participantId }: Props
             <span className="text-gray-600">·</span>
             <span className="text-gray-300">{currentCard.distance}</span>
           </div>
-
-          {/* Depth layer toggle */}
-          <button
-            onClick={() => setExpanded((e) => !e)}
-            className="text-gray-500 text-sm cursor-pointer touch-manipulation hover:text-gray-300 transition-colors"
-          >
-            {expanded ? "↑ Less info" : "↓ More info"}
-          </button>
 
           {/* Depth layer */}
           {expanded && (
