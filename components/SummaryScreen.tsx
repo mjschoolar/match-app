@@ -51,6 +51,9 @@ function RestaurantCard({
         <div className="min-w-0">
           <p className="font-semibold truncate">{r.name}</p>
           <p className="text-sm text-gray-400 truncate">{r.cuisine}</p>
+          {r.matchedBy?.length > 0 && (
+            <p className="text-xs text-gray-500 mt-0.5">{r.matchedBy.join(", ")}</p>
+          )}
         </div>
         <span
           className={[

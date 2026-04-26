@@ -53,6 +53,7 @@ function SwipeCard({
   drag,
   animPhase,
   cardInnerRef,
+  isFirstCard,
   onTouchStart,
   onTouchMove,
   onTouchEnd,
@@ -63,6 +64,7 @@ function SwipeCard({
   drag: { x: number; y: number };
   animPhase: AnimPhase;
   cardInnerRef: React.RefObject<HTMLDivElement | null>;
+  isFirstCard: boolean;
   onTouchStart: (e: React.TouchEvent) => void;
   onTouchMove: (e: React.TouchEvent) => void;
   onTouchEnd: (e: React.TouchEvent) => void;
@@ -72,10 +74,18 @@ function SwipeCard({
   // card rise smoothly from the peek position underneath.
   const wrapRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (wrapRef.current) {
-      wrapRef.current.style.animation = "cardAdvance 0.28s ease-out";
-    }
-  }, []);
+    if (!wrapRef.current) return;
+    wrapRef.current.style.animation = "cardAdvance 0.28s ease-out";
+
+    // On the first card only: fire a nudge after cardAdvance settles to hint the card is draggable
+    if (!isFirstCard) return;
+    const timer = setTimeout(() => {
+      if (wrapRef.current) {
+        wrapRef.current.style.animation = "cardNudge 0.6s ease-in-out";
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [isFirstCard]);
 
   // Derived visual values — recalculated on every drag update
   const cardWidth = cardInnerRef.current?.getBoundingClientRect().width ?? 320;
@@ -168,7 +178,7 @@ function SwipeCard({
 
             {/* Depth layer toggle — stopPropagation prevents the card's own tap handler firing */}
             <button
-              onTouchEnd={(e) => { e.stopPropagation(); onToggleExpanded(); }}
+              onTouchEnd={(e) => { e.stopPropagation(); e.preventDefault(); onToggleExpanded(); }}
               onClick={(e) => { e.stopPropagation(); onToggleExpanded(); }}
               className={[
                 "flex-shrink-0 w-10 h-10 rounded-full bg-white/10 flex items-center justify-center",
@@ -203,7 +213,6 @@ export default function SwipeScreen({ sessionId, session, participantId }: Props
   const hasDraggedRef   = useRef(false);
   const cardWidthRef    = useRef(320);
   const cardInnerRef    = useRef<HTMLDivElement>(null);
-
   const currentIndex = Object.keys(decisions).length;
   const currentCard  = RESTAURANTS[currentIndex];
   const nextCard     = RESTAURANTS[currentIndex + 1];
@@ -316,13 +325,15 @@ export default function SwipeScreen({ sessionId, session, participantId }: Props
     allIds: string[]
   ) {
     const total = allIds.length;
+    const participants = session.participants || {};
     const complete = [], majority = [], partial = [];
     for (const r of RESTAURANTS) {
-      const rightCount = allIds.filter((pid) => allDecisions[pid]?.[r.id] === "right").length;
-      const entry = { id: r.id, name: r.name, cuisine: r.cuisine, rating: r.rating, distance: r.distance };
-      if (rightCount === total)        complete.push(entry);
-      else if (rightCount > total / 2) majority.push(entry);
-      else if (rightCount > 0)         partial.push(entry);
+      const matchedIds = allIds.filter((pid) => allDecisions[pid]?.[r.id] === "right");
+      const matchedBy = matchedIds.map((pid) => participants[pid]?.name ?? pid);
+      const entry = { id: r.id, name: r.name, cuisine: r.cuisine, rating: r.rating, distance: r.distance, matchedBy };
+      if (matchedIds.length === total)        complete.push(entry);
+      else if (matchedIds.length > total / 2) majority.push(entry);
+      else if (matchedIds.length > 0)         partial.push(entry);
     }
     return { complete, majority, partial };
   }
@@ -360,6 +371,7 @@ export default function SwipeScreen({ sessionId, session, participantId }: Props
             drag={drag}
             animPhase={animPhase}
             cardInnerRef={cardInnerRef}
+            isFirstCard={currentIndex === 0}
             onTouchStart={onTouchStart}
             onTouchMove={onTouchMove}
             onTouchEnd={onTouchEnd}

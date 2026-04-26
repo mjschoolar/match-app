@@ -14,6 +14,7 @@ export interface RestaurantResult {
   cuisine: string;
   rating: number;
   distance: string;
+  matchedBy: string[];
 }
 
 export interface Session {

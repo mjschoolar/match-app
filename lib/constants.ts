@@ -26,6 +26,7 @@ export const DIETARY = [
   { id: "shellfish",   label: "Shellfish allergy" },
   { id: "nut-allergy", label: "Nut allergy"       },
   { id: "dairy-free",  label: "Dairy-free"        },
+  { id: "other",       label: "Other"             },
 ] as const;
 
 export const RESTAURANTS = [

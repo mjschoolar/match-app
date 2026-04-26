@@ -13,6 +13,12 @@ import { ref, set, get } from "firebase/database";
 import { Session } from "@/lib/types";
 
 const PRICE_TIERS = ["$", "$$", "$$$", "$$$$"] as const;
+const PRICE_DESCRIPTORS: Record<string, string> = {
+  "$":    "Casual",
+  "$$":   "Mid-range",
+  "$$$":  "Nice out",
+  "$$$$": "Splurge",
+};
 type PriceTier = (typeof PRICE_TIERS)[number];
 
 interface Props {
@@ -129,6 +135,7 @@ export default function PriceScreen({ sessionId, session, participantId }: Props
                     ].join(" ")}
                   >
                     <span>{tier}</span>
+                    <span className="text-xs font-normal opacity-60">{PRICE_DESCRIPTORS[tier]}</span>
                     <span className="text-xs font-normal opacity-50">
                       {count > 0 ? count : "·"}
                     </span>
