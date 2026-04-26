@@ -76,6 +76,18 @@ export default function SessionPage() {
     );
   }
 
+  // If this participant's ID no longer exists in the session, they were removed by the creator.
+  if (!session.participants?.[participantId]) {
+    return (
+      <main className="min-h-screen flex flex-col items-center justify-center p-8 bg-gray-950 text-white">
+        <div className="text-center space-y-4">
+          <p className="text-xl font-semibold">You&apos;ve been removed from this session.</p>
+          <a href="/" className="text-gray-400 underline text-sm">← Go back home</a>
+        </div>
+      </main>
+    );
+  }
+
   // ── Phase router ──
   // Each phase maps to a screen component. As we build more phases,
   // we add them here. The phase field in Firebase is the single source

@@ -1,17 +1,16 @@
 "use client";
 // LobbyScreen — shown to all participants while waiting to begin.
 //
-// Creator sees: the session code (to share with others), the live participant
-// list, and a "Let's start" button.
-//
-// Joiners see: the live participant list and a message that the creator
-// controls when things start.
-//
-// The participant list updates in real time — no refresh needed. When
-// someone new joins, their name appears on every device immediately.
+// V3.2 changes:
+//   - Participants can tap the pencil icon next to their own name to edit it in place.
+//     The update writes to Firebase immediately and reflects on all devices.
+//   - Creator sees a ✕ remove button next to each other participant. Removing a
+//     participant deletes their entry from participants/ and cleans up any partial
+//     response data. Only available in the lobby phase.
 
+import { useState } from "react";
 import { db } from "@/lib/firebase";
-import { ref, set } from "firebase/database";
+import { ref, set, remove } from "firebase/database";
 import { Session } from "@/lib/types";
 
 interface Props {
@@ -25,8 +24,30 @@ export default function LobbyScreen({ sessionId, session, participantId }: Props
   const participants = Object.entries(session.participants || {});
   const creatorName = session.participants[session.creatorId]?.name ?? "the host";
 
-  // The creator taps this to advance everyone to the first voting step.
-  // Writing a new phase to Firebase triggers re-renders on all devices.
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState("");
+
+  function startEditing() {
+    setEditValue(session.participants[participantId]?.name ?? "");
+    setIsEditing(true);
+  }
+
+  async function commitEdit() {
+    const trimmed = editValue.trim();
+    if (trimmed && trimmed !== session.participants[participantId]?.name) {
+      await set(ref(db, `sessions/${sessionId}/participants/${participantId}/name`), trimmed);
+    }
+    setIsEditing(false);
+  }
+
+  async function handleRemove(pid: string) {
+    const responseKeys = ["dineIn", "distance", "price", "veto", "vetoDone", "dietary", "dietaryDone", "preferences", "preferencesDone"];
+    await remove(ref(db, `sessions/${sessionId}/participants/${pid}`));
+    await Promise.all(
+      responseKeys.map((key) => remove(ref(db, `sessions/${sessionId}/responses/${key}/${pid}`)))
+    );
+  }
+
   async function handleStart() {
     await set(ref(db, `sessions/${sessionId}/phase`), "dine-in");
   }
@@ -47,20 +68,58 @@ export default function LobbyScreen({ sessionId, session, participantId }: Props
         {/* Live participant list */}
         <div className="space-y-2">
           <p className="text-sm text-gray-400 text-center mb-3">In the room</p>
-          {participants.map(([id, participant]) => (
-            <div
-              key={id}
-              className="flex items-center gap-3 bg-gray-800 rounded-xl px-4 py-3"
-            >
-              <span className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" />
-              <span className="font-medium">
-                {participant.name}
-                {id === participantId && (
-                  <span className="text-gray-500 font-normal"> (you)</span>
+          {participants.map(([id, participant]) => {
+            const isMe = id === participantId;
+            const isCreatorRow = id === session.creatorId;
+
+            return (
+              <div
+                key={id}
+                className="flex items-center gap-3 bg-gray-800 rounded-xl px-4 py-3"
+              >
+                <span className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" />
+
+                {/* Name — editable for own row only */}
+                {isMe && isEditing ? (
+                  <input
+                    autoFocus
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                    onBlur={commitEdit}
+                    onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); }}
+                    className="flex-1 bg-transparent border-b border-white/40 text-white font-medium outline-none"
+                  />
+                ) : (
+                  <span className="flex-1 font-medium">
+                    {participant.name}
+                    {isMe && <span className="text-gray-500 font-normal"> (you)</span>}
+                  </span>
                 )}
-              </span>
-            </div>
-          ))}
+
+                {/* Pencil edit icon — own row only, not while editing */}
+                {isMe && !isEditing && (
+                  <button
+                    onClick={startEditing}
+                    className="text-gray-500 hover:text-gray-300 touch-manipulation text-sm px-1"
+                    aria-label="Edit name"
+                  >
+                    ✏
+                  </button>
+                )}
+
+                {/* Remove button — creator only, not for themselves or while editing their own name */}
+                {isCreator && !isMe && !isCreatorRow && (
+                  <button
+                    onClick={() => handleRemove(id)}
+                    className="text-gray-600 hover:text-red-400 touch-manipulation text-sm px-1 ml-auto"
+                    aria-label="Remove participant"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            );
+          })}
 
           {/* Placeholder dots to suggest more people can join */}
           <div className="flex items-center gap-3 px-4 py-3 opacity-30">

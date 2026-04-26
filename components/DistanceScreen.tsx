@@ -32,6 +32,11 @@ export default function DistanceScreen({ sessionId, session, participantId }: Pr
   const totalResponded = Object.keys(responses).length;
   const iAmLocked = myResponse !== undefined;
 
+  // Determine group dine-in outcome from individual votes
+  const dineInVotes = Object.values(session.responses?.dineIn || {});
+  const deliveryCount = dineInVotes.filter((v) => v === "delivery").length;
+  const isDelivery = deliveryCount > dineInVotes.length / 2;
+
   async function handleSubmit() {
     if (iAmLocked) return; // guard against double-tap
 
@@ -86,9 +91,14 @@ export default function DistanceScreen({ sessionId, session, participantId }: Pr
     <main className="min-h-screen flex flex-col items-center justify-center p-8 bg-gray-950 text-white">
       <div className="max-w-sm w-full space-y-6">
 
-        <h2 className="text-2xl font-semibold text-center leading-snug">
-          How far are you willing to go tonight?
-        </h2>
+        <div className="text-center space-y-1">
+          <h2 className="text-2xl font-semibold leading-snug">
+            {isDelivery ? "How far can they deliver?" : "How far are you willing to go?"}
+          </h2>
+          {isDelivery && (
+            <p className="text-sm text-gray-500">Most delivery services reach 5–10 miles.</p>
+          )}
+        </div>
 
         {/* ── VOTING STATE — slider always visible, locked after submitting ── */}
         {!isReveal && (
@@ -107,7 +117,7 @@ export default function DistanceScreen({ sessionId, session, participantId }: Pr
               <input
                 type="range"
                 min={1}
-                max={10}
+                max={30}
                 step={1}
                 value={iAmLocked ? myResponse : sliderValue}
                 onChange={(e) => {
@@ -121,7 +131,7 @@ export default function DistanceScreen({ sessionId, session, participantId }: Pr
               />
               <div className="flex justify-between text-sm text-gray-500">
                 <span>1 mi</span>
-                <span>10 mi</span>
+                <span>30 mi</span>
               </div>
 
               {/* Submit button — hidden after locking in */}

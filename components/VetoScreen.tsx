@@ -48,8 +48,12 @@ export default function VetoScreen({ sessionId, session, participantId }: Props)
     ).length;
   }
 
+  const VETO_CAP = 3;
+
   function toggleCuisine(cuisineId: string) {
     if (iAmDone || isReveal) return;
+    // At cap: only allow de-selecting, not adding more
+    if (!selections.includes(cuisineId) && selections.length >= VETO_CAP) return;
 
     const next = selections.includes(cuisineId)
       ? selections.filter((s) => s !== cuisineId)
@@ -127,25 +131,36 @@ export default function VetoScreen({ sessionId, session, participantId }: Props)
         {/* ── VOTING STATE ── */}
         {!isReveal && (
           <>
+            {/* Cap indicator */}
+            <p className="text-center text-sm text-gray-400">
+              {selections.length === VETO_CAP
+                ? `${VETO_CAP}/${VETO_CAP} vetoes used`
+                : `${selections.length}/${VETO_CAP} vetoes used`}
+            </p>
+
             {/* Cuisine grid — tiles show count badges, not names */}
             <div className="grid grid-cols-3 gap-2">
               {CUISINES.map((cuisine) => {
                 const selected = selections.includes(cuisine.id);
                 const count = vetoCountFor(cuisine.id);
+                const atCap = selections.length >= VETO_CAP;
+                const blockedByCap = atCap && !selected;
 
                 return (
                   <button
                     key={cuisine.id}
                     onClick={() => toggleCuisine(cuisine.id)}
-                    disabled={iAmDone}
+                    disabled={iAmDone || blockedByCap}
                     className={[
                       "py-3 px-2 rounded-xl text-sm font-medium touch-manipulation transition-colors",
                       selected
-                        ? "bg-red-500/20 text-red-300 border border-red-500/40"           // I vetoed it
+                        ? "bg-red-500/20 text-red-300 border border-red-500/40 cursor-pointer"   // I vetoed it
+                        : blockedByCap
+                        ? "bg-gray-800 text-gray-600 cursor-default opacity-40"                   // cap reached — dimmed
                         : count > 0
-                        ? "bg-red-500/10 text-red-300/70 border border-red-500/20"         // others vetoed it
-                        : "bg-gray-800 text-gray-300 hover:bg-gray-700",                   // nobody yet
-                      iAmDone ? "cursor-default" : "cursor-pointer",
+                        ? "bg-red-500/10 text-red-300/70 border border-red-500/20 cursor-pointer" // others vetoed it
+                        : "bg-gray-800 text-gray-300 hover:bg-gray-700 cursor-pointer",           // nobody yet
+                      iAmDone ? "cursor-default" : "",
                     ].join(" ")}
                   >
                     {(selected || count > 0) && <span className="mr-1">✕</span>}
