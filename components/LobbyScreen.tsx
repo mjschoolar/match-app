@@ -75,7 +75,11 @@ export default function LobbyScreen({ sessionId, session, participantId }: Props
             return (
               <div
                 key={id}
-                className="flex items-center gap-3 bg-gray-800 rounded-xl px-4 py-3"
+                onClick={() => { if (isMe && !isEditing) startEditing(); }}
+                className={[
+                  "flex items-center gap-3 bg-gray-800 rounded-xl px-4 py-3",
+                  isMe && !isEditing ? "cursor-pointer" : "",
+                ].join(" ")}
               >
                 <span className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" />
 
@@ -87,6 +91,7 @@ export default function LobbyScreen({ sessionId, session, participantId }: Props
                     onChange={(e) => setEditValue(e.target.value)}
                     onBlur={commitEdit}
                     onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); }}
+                    onClick={(e) => e.stopPropagation()}
                     className="flex-1 bg-transparent border-b border-white/40 text-white font-medium outline-none"
                   />
                 ) : (
@@ -96,15 +101,9 @@ export default function LobbyScreen({ sessionId, session, participantId }: Props
                   </span>
                 )}
 
-                {/* Pencil edit icon — own row only, not while editing */}
+                {/* Pencil icon — visual affordance for own row, click handled by container */}
                 {isMe && !isEditing && (
-                  <button
-                    onClick={startEditing}
-                    className="text-gray-500 hover:text-gray-300 touch-manipulation text-sm px-1"
-                    aria-label="Edit name"
-                  >
-                    ✏
-                  </button>
+                  <span className="text-gray-500 text-sm px-1">✏</span>
                 )}
 
                 {/* Remove button — creator only, not for themselves or while editing their own name */}

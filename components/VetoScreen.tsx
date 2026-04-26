@@ -154,12 +154,14 @@ export default function VetoScreen({ sessionId, session, participantId }: Props)
                     className={[
                       "py-3 px-2 rounded-xl text-sm font-medium touch-manipulation transition-colors",
                       selected
-                        ? "bg-red-500/20 text-red-300 border border-red-500/40 cursor-pointer"   // I vetoed it
+                        ? "bg-red-500/20 text-red-300 border border-red-500/40 cursor-pointer"            // I vetoed it
+                        : blockedByCap && count > 0
+                        ? "bg-red-500/10 text-red-300/70 border border-red-500/20 cursor-default opacity-60" // cap + others vetoed — keep red, muted
                         : blockedByCap
-                        ? "bg-gray-800 text-gray-600 cursor-default opacity-40"                   // cap reached — dimmed
+                        ? "bg-gray-800 text-gray-600 cursor-default opacity-40"                            // cap — nobody vetoed, dimmed
                         : count > 0
-                        ? "bg-red-500/10 text-red-300/70 border border-red-500/20 cursor-pointer" // others vetoed it
-                        : "bg-gray-800 text-gray-300 hover:bg-gray-700 cursor-pointer",           // nobody yet
+                        ? "bg-red-500/10 text-red-300/70 border border-red-500/20 cursor-pointer"         // others vetoed it
+                        : "bg-gray-800 text-gray-300 hover:bg-gray-700 cursor-pointer",                   // nobody yet
                       iAmDone ? "cursor-default" : "",
                     ].join(" ")}
                   >
