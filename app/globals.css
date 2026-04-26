@@ -47,7 +47,7 @@ button {
 /* Swipe card: brief nudge on first card to hint the card is draggable */
 @keyframes cardNudge {
   0%   { transform: translate(0px, 0px) rotate(0deg); }
-  25%  { transform: translate(-22px, 0px) rotate(-2deg); }
-  60%  { transform: translate(12px, 0px) rotate(1deg); }
+  25%  { transform: translate(22px, 0px) rotate(2deg); }
+  60%  { transform: translate(-12px, 0px) rotate(-1deg); }
   100% { transform: translate(0px, 0px) rotate(0deg); }
 }
