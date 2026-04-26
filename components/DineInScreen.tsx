@@ -63,7 +63,7 @@ export default function DineInScreen({ sessionId, session, participantId }: Prop
     const dineInVotes = votes.filter((v) => v === "dine-in").length;
 
     if (dineInVotes === total) return "We're eating in tonight.";
-    if (dineInVotes === 0) return "We're going out tonight.";
+    if (dineInVotes === 0) return "Nobody's leaving the couch. Food is coming to us.";
     if (dineInVotes > total / 2) return "Mostly going out — we'll look at dine-in spots.";
     if (dineInVotes < total / 2) return "Mostly staying in — we'll look at delivery options.";
     return "It's a split — we'll look at dine-in spots.";

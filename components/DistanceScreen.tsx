@@ -66,8 +66,8 @@ export default function DistanceScreen({ sessionId, session, participantId }: Pr
     const values = (Object.values(responses) as number[]).sort((a, b) => a - b);
     if (values.length === 0) return 0;
     const mid = Math.floor(values.length / 2);
-    // Odd count: middle value. Even count: lower of the two middle values.
-    return values.length % 2 !== 0 ? values[mid] : values[mid - 1];
+    // Odd count: middle value. Even count: average of the two middle values, rounded.
+    return values.length % 2 !== 0 ? values[mid] : Math.round((values[mid - 1] + values[mid]) / 2);
   }
 
   function getSummary(): string {

@@ -202,24 +202,28 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
                   <button
                     key={cuisine.id}
                     onClick={() => toggleCuisine(cuisine.id)}
-                    disabled={vetoed || (atMax && !iAmDone) || iAmDone}
+                    disabled={vetoed || atMax || iAmDone}
                     className={[
                       "py-3 px-2 rounded-xl text-sm font-medium transition-colors touch-manipulation",
                       vetoed
                         ? "bg-gray-900 text-gray-700 line-through cursor-not-allowed"
                         : iMine
-                        ? "bg-white text-gray-950 cursor-pointer"                          // my pick — most prominent
+                        ? "bg-white text-gray-950 cursor-pointer"                                                              // my pick
+                        : atMax && othersCount > 0
+                        ? "bg-green-500/10 text-green-300/70 border border-green-500/20 cursor-default opacity-60"             // cap + others picked — green dimmed
+                        : atMax
+                        ? "bg-gray-800 text-gray-600 cursor-default opacity-40"                                               // cap — nobody picked, dimmed
                         : othersCount > 0
-                        ? "bg-gray-700 text-gray-100 border border-white/20 " + (iAmDone ? "cursor-default" : "cursor-pointer") // others picked — semi-selected
-                        : atMax || iAmDone
+                        ? "bg-green-500/10 text-green-300/70 border border-green-500/20 cursor-pointer"                       // others picked it
+                        : iAmDone
                         ? "bg-gray-800 text-gray-600 cursor-default"
                         : "bg-gray-800 text-gray-300 hover:bg-gray-700 cursor-pointer",
                     ].join(" ")}
                   >
+                    {othersCount > 0 && <span className="mr-1">✓</span>}
                     {cuisine.label}
-                    {/* Count badge — shows when multiple others picked this tile */}
                     {othersCount > 1 && (
-                      <span className="ml-1 text-xs font-normal text-white/40">
+                      <span className="ml-1 text-xs font-normal opacity-60">
                         ({othersCount})
                       </span>
                     )}
