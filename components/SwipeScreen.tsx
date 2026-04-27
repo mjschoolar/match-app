@@ -14,7 +14,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { db } from "@/lib/firebase";
-import { ref, set } from "firebase/database";
+import { ref, set, get } from "firebase/database";
 import { Session, StackRestaurant, RestaurantResult } from "@/lib/types";
 import { RESTAURANTS } from "@/lib/constants";
 
@@ -419,9 +419,14 @@ export default function SwipeScreen({ sessionId, session, participantId }: Props
     if (Object.keys(newDecisions).length === deck.length) {
       await set(ref(db, `sessions/${sessionId}/swipeComplete/${participantId}`), true);
 
+      // Fresh read from Firebase — don't rely on stale React state.
+      // If two devices finish close together, the local session snapshot may
+      // not yet reflect the other participant's completion, causing both to
+      // see allDone = false and neither to advance the phase.
       const allIds = Object.keys(session.participants || {});
-      const updatedComplete = { ...(session.swipeComplete || {}), [participantId]: true };
-      const allDone = allIds.every((id) => updatedComplete[id] === true);
+      const snap = await get(ref(db, `sessions/${sessionId}/swipeComplete`));
+      const freshComplete = (snap.val() || {}) as Record<string, boolean>;
+      const allDone = allIds.every((id) => freshComplete[id] === true);
 
       if (allDone) {
         const allDecisions = { ...(session.swipeDecisions || {}), [participantId]: newDecisions };
