@@ -1,23 +1,21 @@
 "use client";
-// SwipeScreen — V3: gesture-driven card swipe with physics feel.
+// SwipeScreen — V2.0: real restaurant data from Firebase stack.
 //
-// Architecture:
-//   - React state drives card position (drag.x, drag.y) and animation phase.
-//   - Refs track raw touch coordinates and measured card width — no re-renders
-//     during the gesture setup, only during the drag itself.
-//   - touch-action: none on the card prevents the browser from intercepting
-//     the touch for scrolling, so we don't need e.preventDefault().
-//   - key={currentCard.id} remounts the card div on each advance. A useEffect
-//     inside the card applies the @keyframes cardAdvance animation on mount,
-//     so every new card rises from the peek position naturally.
-//   - Tap vs drag: distinguished by 8px horizontal travel threshold.
-//   - Depth layer tap (the ↓ button) uses stopPropagation to avoid triggering
-//     the parent card's tap handler.
+// V2.0 changes:
+//   - Reads deck from session.stack.restaurants (StackRestaurant objects from Places API).
+//   - Falls back to hardcoded RESTAURANTS if no stack is generated yet.
+//   - Card face: name, matchCategory, real photo, "4.7 ★ · 1,847 reviews", price, distance.
+//   - Detail layer (tap to expand): editorial summary, open status, address,
+//     tap-to-call phone, tap-to-open website, attribute chips.
+//   - Match result writes enriched RestaurantResult objects (address, phone, etc.)
+//   - Photo fallback: solid bg-gray-700 tile if photoUrl is null or fails to load.
+//
+// Gesture mechanics, tap threshold, snap-back, exit animation — unchanged from V3.
 
 import { useState, useRef, useEffect } from "react";
 import { db } from "@/lib/firebase";
 import { ref, set } from "firebase/database";
-import { Session } from "@/lib/types";
+import { Session, StackRestaurant, RestaurantResult } from "@/lib/types";
 import { RESTAURANTS } from "@/lib/constants";
 
 interface Props {
@@ -28,25 +26,58 @@ interface Props {
 
 type AnimPhase = "idle" | "snap-back" | "exit-left" | "exit-right";
 
-// Gesture constants
-const TILT_PER_PX       = 1 / 11;   // 1° per 11px of horizontal travel
-const MAX_TILT_DEG      = 10;        // tilt capped at ±10°
-const Y_DAMPEN          = 0.25;      // vertical follow: 25% of actual finger travel
-const TAP_THRESHOLD_PX  = 8;        // travel below this = tap, not drag
-const TINT_MAX_OPACITY  = 0.18;     // maximum color wash opacity (very subtle)
-const COMMIT_RATIO      = 0.25;     // swipe commits at 25% of card width
-const EXIT_MS           = 280;      // exit animation duration
-const SNAP_MS           = 420;      // snap-back animation duration
+// Gesture constants (unchanged)
+const TILT_PER_PX      = 1 / 11;
+const MAX_TILT_DEG     = 10;
+const Y_DAMPEN         = 0.25;
+const TAP_THRESHOLD_PX = 8;
+const TINT_MAX_OPACITY = 0.18;
+const COMMIT_RATIO     = 0.25;
+const EXIT_MS          = 280;
+const SNAP_MS          = 420;
 
-function stars(rating: number): string {
-  const filled = Math.round(rating);
-  return "★".repeat(filled) + "☆".repeat(5 - filled);
+// ── Price display ─────────────────────────────────────────────────────────────
+const PRICE_LABELS: Record<number, string> = { 1: "$", 2: "$$", 3: "$$$", 4: "$$$$" };
+
+// ── Normalize Firebase array/object → real array ──────────────────────────────
+function normalizeRestaurants(
+  val: StackRestaurant[] | Record<string, StackRestaurant> | undefined
+): StackRestaurant[] {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  return Object.values(val);
 }
 
-// ── Inner card component ────────────────────────────────────────────────────
-// Separated so that key={currentCard.id} on this element causes React to fully
-// remount it when the card advances. The useEffect then fires fresh on each
-// new card and applies the rise-from-peek animation.
+// ── Adapt legacy RESTAURANTS constant to StackRestaurant shape ─────────────────
+function adaptLegacy(r: (typeof RESTAURANTS)[number]): StackRestaurant {
+  const priceIndex = ["$", "$$", "$$$", "$$$$"].indexOf(r.price);
+  return {
+    id: r.id,
+    name: r.name,
+    matchCategory: r.cuisine,
+    rating: r.rating,
+    reviewCount: 0,
+    priceLevel: priceIndex >= 0 ? priceIndex + 1 : null,
+    photoUrl: r.image,
+    address: "",
+    phone: null,
+    websiteUrl: null,
+    distanceMiles: parseFloat(r.distance),
+    location: { lat: 0, lng: 0 },
+    editorialSummary: r.knownFor || null,
+    closingTime: null,
+    isOpenNow: null,
+    goodForGroups: null,
+    outdoorSeating: null,
+    reservable: null,
+    takeout: null,
+    delivery: null,
+    servesDrinks: null,
+    wheelchairAccessible: null,
+  };
+}
+
+// ── Inner card component ──────────────────────────────────────────────────────
 function SwipeCard({
   card,
   expanded,
@@ -59,7 +90,7 @@ function SwipeCard({
   onTouchEnd,
   onToggleExpanded,
 }: {
-  card: (typeof RESTAURANTS)[number];
+  card: StackRestaurant;
   expanded: boolean;
   drag: { x: number; y: number };
   animPhase: AnimPhase;
@@ -70,14 +101,13 @@ function SwipeCard({
   onTouchEnd: (e: React.TouchEvent) => void;
   onToggleExpanded: () => void;
 }) {
-  // The wrapper div gets the keyframe animation on mount — makes every new
-  // card rise smoothly from the peek position underneath.
   const wrapRef = useRef<HTMLDivElement>(null);
+  const [photoError, setPhotoError] = useState(false);
+
   useEffect(() => {
     if (!wrapRef.current) return;
     wrapRef.current.style.animation = "cardAdvance 0.28s ease-out";
 
-    // On the first card only: fire a nudge after cardAdvance settles to hint the card is draggable
     if (!isFirstCard) return;
     const timer = setTimeout(() => {
       if (wrapRef.current) {
@@ -87,36 +117,47 @@ function SwipeCard({
     return () => clearTimeout(timer);
   }, [isFirstCard]);
 
-  // Derived visual values — recalculated on every drag update
   const cardWidth = cardInnerRef.current?.getBoundingClientRect().width ?? 320;
   const threshold = cardWidth * COMMIT_RATIO || 144;
   const tilt = Math.max(-MAX_TILT_DEG, Math.min(MAX_TILT_DEG, drag.x * TILT_PER_PX));
   const rawTintOpacity = Math.min(TINT_MAX_OPACITY, (Math.abs(drag.x) / threshold) * TINT_MAX_OPACITY);
-  // Fade tint out during snap-back so it doesn't linger
   const tintOpacity = animPhase === "snap-back" ? 0 : rawTintOpacity;
   const tintRgb = drag.x >= 0 ? "0, 200, 100" : "255, 60, 60";
 
-  // Build the CSS transform + transition for each animation phase
   let transform: string;
   let transition: string;
 
   if (animPhase === "snap-back") {
-    // Spring curve: eases out then slightly overshoots before settling
     transform  = "translate(0px, 0px) rotate(0deg)";
     transition = `transform ${SNAP_MS}ms cubic-bezier(0.175, 0.885, 0.32, 1.275)`;
   } else if (animPhase === "exit-left") {
-    // Accelerates off-screen to the left
     transform  = `translate(-130vw, ${drag.y}px) rotate(-22deg)`;
     transition = `transform ${EXIT_MS}ms cubic-bezier(0.4, 0, 1, 1)`;
   } else if (animPhase === "exit-right") {
-    // Accelerates off-screen to the right
     transform  = `translate(130vw, ${drag.y}px) rotate(22deg)`;
     transition = `transform ${EXIT_MS}ms cubic-bezier(0.4, 0, 1, 1)`;
   } else {
-    // Live drag — card follows the finger directly, no transition
     transform  = `translate(${drag.x}px, ${drag.y}px) rotate(${tilt}deg)`;
     transition = "none";
   }
+
+  const hasPhoto = card.photoUrl && !photoError;
+  const price = card.priceLevel ? PRICE_LABELS[card.priceLevel] : null;
+  const reviewText = card.reviewCount > 0
+    ? card.reviewCount >= 1000
+      ? `${(card.reviewCount / 1000).toFixed(1)}k reviews`
+      : `${card.reviewCount} reviews`
+    : null;
+
+  // Attribute chips — only show fields confirmed true
+  const attrs: string[] = [];
+  if (card.goodForGroups === true)     attrs.push("Good for groups");
+  if (card.outdoorSeating === true)    attrs.push("Outdoor seating");
+  if (card.reservable === true)        attrs.push("Reservable");
+  if (card.takeout === true)           attrs.push("Takeout");
+  if (card.delivery === true)          attrs.push("Delivery");
+  if (card.servesDrinks === true)      attrs.push("Serves drinks");
+  if (card.wheelchairAccessible === true) attrs.push("Wheelchair accessible");
 
   return (
     <div
@@ -124,42 +165,117 @@ function SwipeCard({
       style={{ transform, transition, willChange: "transform", zIndex: 1 }}
       className="absolute inset-0"
     >
-      {/* touch-none: prevents browser scroll from intercepting the touch gesture */}
       <div
         ref={cardInnerRef}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
-        className="w-full h-full rounded-3xl bg-gray-800 overflow-hidden relative touch-none select-none"
-        style={{ backgroundImage: `url(${card.image})`, backgroundSize: "cover", backgroundPosition: "center" }}
+        className="w-full h-full rounded-3xl overflow-hidden relative touch-none select-none"
+        style={
+          hasPhoto
+            ? {
+                backgroundImage: `url(${card.photoUrl})`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+                backgroundColor: "#374151",
+              }
+            : { backgroundColor: "#374151" }
+        }
       >
-        {/* Dark gradient — ensures text is readable over the photo */}
+        {/* Hidden img tag to detect load errors */}
+        {card.photoUrl && (
+          <img
+            src={card.photoUrl}
+            alt=""
+            className="hidden"
+            onError={() => setPhotoError(true)}
+          />
+        )}
+
+        {/* Gradient overlay */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent pointer-events-none z-0" />
 
-        {/* Directional tint — faint red (left) or green (right) wash */}
+        {/* Directional tint */}
         <div
           className="absolute inset-0 rounded-3xl pointer-events-none z-10 transition-colors duration-75"
-          style={{ backgroundColor: tintOpacity > 0.005 ? `rgba(${tintRgb}, ${tintOpacity})` : "transparent" }}
+          style={{
+            backgroundColor:
+              tintOpacity > 0.005 ? `rgba(${tintRgb}, ${tintOpacity})` : "transparent",
+          }}
         />
 
-        {/* Card content — anchored to the bottom of the card face */}
+        {/* Card content */}
         <div className="absolute inset-0 flex flex-col justify-end p-6 z-20">
 
-          {/* Depth layer — appears above the main info when expanded */}
+          {/* Expanded detail layer */}
           {expanded && (
-            <div className="mb-4 rounded-2xl bg-black/60 p-4 space-y-2.5 text-sm text-gray-300 backdrop-blur-sm">
-              <div className="flex gap-2">
-                <span className="text-gray-500 w-24 flex-shrink-0">Price</span>
-                <span>{card.price}</span>
-              </div>
-              <div className="flex gap-2">
-                <span className="text-gray-500 w-24 flex-shrink-0">Known for</span>
-                <span>{card.knownFor}</span>
-              </div>
-              <div className="flex gap-2">
-                <span className="text-gray-500 w-24 flex-shrink-0">Hours</span>
-                <span>{card.hours}</span>
-              </div>
+            <div className="mb-4 rounded-2xl bg-black/70 p-4 space-y-3 text-sm text-gray-300 backdrop-blur-sm max-h-64 overflow-y-auto">
+
+              {/* Editorial summary */}
+              {card.editorialSummary && (
+                <p className="text-gray-200 leading-snug">{card.editorialSummary}</p>
+              )}
+
+              {/* Open status */}
+              {card.isOpenNow !== null && (
+                <div className="flex gap-2">
+                  <span className={card.isOpenNow ? "text-green-400" : "text-red-400"}>
+                    {card.isOpenNow
+                      ? card.closingTime ? `Open until ${card.closingTime}` : "Open now"
+                      : "Closed"}
+                  </span>
+                </div>
+              )}
+
+              {/* Address */}
+              {card.address && (
+                <div className="flex gap-2">
+                  <span className="text-gray-500 flex-shrink-0">📍</span>
+                  <span className="text-gray-300 leading-snug">{card.address}</span>
+                </div>
+              )}
+
+              {/* Phone */}
+              {card.phone && (
+                <a
+                  href={`tel:${card.phone}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex gap-2 items-center"
+                >
+                  <span className="text-gray-500 flex-shrink-0">📞</span>
+                  <span className="text-blue-400 underline">{card.phone}</span>
+                </a>
+              )}
+
+              {/* Website */}
+              {card.websiteUrl && (
+                <a
+                  href={card.websiteUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex gap-2 items-center"
+                >
+                  <span className="text-gray-500 flex-shrink-0">🔗</span>
+                  <span className="text-blue-400 underline truncate">
+                    {card.websiteUrl.replace(/^https?:\/\/(www\.)?/, "").split("/")[0]}
+                  </span>
+                </a>
+              )}
+
+              {/* Attribute chips */}
+              {attrs.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {attrs.map((attr) => (
+                    <span
+                      key={attr}
+                      className="text-xs bg-white/10 text-gray-300 rounded-full px-2.5 py-1"
+                    >
+                      {attr}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -167,16 +283,24 @@ function SwipeCard({
           <div className="flex items-end justify-between gap-3">
             <div>
               <h2 className="text-3xl font-bold leading-tight">{card.name}</h2>
-              <p className="text-gray-400 mt-1">{card.cuisine}</p>
-              <div className="flex items-center gap-3 text-sm mt-2">
-                <span className="text-yellow-400 tracking-tight">{stars(card.rating)}</span>
-                <span className="text-gray-300">{card.rating}</span>
+              <p className="text-gray-400 mt-1">{card.matchCategory}</p>
+              <div className="flex items-center flex-wrap gap-x-3 gap-y-1 text-sm mt-2">
+                <span className="text-yellow-400">★ {card.rating}</span>
+                {reviewText && (
+                  <span className="text-gray-400">{reviewText}</span>
+                )}
+                {price && (
+                  <>
+                    <span className="text-gray-600">·</span>
+                    <span className="text-gray-300">{price}</span>
+                  </>
+                )}
                 <span className="text-gray-600">·</span>
-                <span className="text-gray-300">{card.distance}</span>
+                <span className="text-gray-300">{card.distanceMiles} mi</span>
               </div>
             </div>
 
-            {/* Depth layer toggle — stopPropagation prevents the card's own tap handler firing */}
+            {/* Detail layer toggle */}
             <button
               onTouchEnd={(e) => { e.stopPropagation(); e.preventDefault(); onToggleExpanded(); }}
               onClick={(e) => { e.stopPropagation(); onToggleExpanded(); }}
@@ -196,9 +320,15 @@ function SwipeCard({
   );
 }
 
-// ── Main component ──────────────────────────────────────────────────────────
+// ── Main component ─────────────────────────────────────────────────────────────
 export default function SwipeScreen({ sessionId, session, participantId }: Props) {
-  // Initialise decisions from Firebase — handles mid-swipe page refresh
+  // Use real stack if available, otherwise fall back to prototype RESTAURANTS
+  const realRestaurants = normalizeRestaurants(session.stack?.restaurants);
+  const deck: StackRestaurant[] =
+    session.stack?.generated && realRestaurants.length > 0
+      ? realRestaurants
+      : RESTAURANTS.map(adaptLegacy);
+
   const existing = (session.swipeDecisions?.[participantId] || {}) as Record<string, string>;
   const [decisions, setDecisions] = useState<Record<string, "right" | "left">>(
     existing as Record<string, "right" | "left">
@@ -208,24 +338,23 @@ export default function SwipeScreen({ sessionId, session, participantId }: Props
   const [drag,       setDrag]       = useState({ x: 0, y: 0 });
   const [animPhase,  setAnimPhase]  = useState<AnimPhase>("idle");
 
-  // Touch tracking — stored in refs so updates don't trigger renders
-  const touchStartRef   = useRef<{ x: number; y: number } | null>(null);
-  const hasDraggedRef   = useRef(false);
-  const cardWidthRef    = useRef(320);
-  const cardInnerRef    = useRef<HTMLDivElement>(null);
-  const currentIndex = Object.keys(decisions).length;
-  const currentCard  = RESTAURANTS[currentIndex];
-  const nextCard     = RESTAURANTS[currentIndex + 1];
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const hasDraggedRef = useRef(false);
+  const cardWidthRef  = useRef(320);
+  const cardInnerRef  = useRef<HTMLDivElement>(null);
 
-  // ── Touch handlers ────────────────────────────────────────────────────────
+  const currentIndex = Object.keys(decisions).length;
+  const currentCard  = deck[currentIndex];
+  const nextCard     = deck[currentIndex + 1];
+
+  // ── Touch handlers (unchanged) ────────────────────────────────────────────
 
   function onTouchStart(e: React.TouchEvent) {
     if (committing) return;
     const t = e.touches[0];
-    touchStartRef.current  = { x: t.clientX, y: t.clientY };
-    hasDraggedRef.current  = false;
-    cardWidthRef.current   = cardInnerRef.current?.getBoundingClientRect().width ?? 320;
-    // Reset any lingering animation so the card responds immediately
+    touchStartRef.current = { x: t.clientX, y: t.clientY };
+    hasDraggedRef.current = false;
+    cardWidthRef.current  = cardInnerRef.current?.getBoundingClientRect().width ?? 320;
     if (animPhase !== "idle") setAnimPhase("idle");
   }
 
@@ -235,7 +364,6 @@ export default function SwipeScreen({ sessionId, session, participantId }: Props
     const dx = t.clientX - touchStartRef.current.x;
     const dy = t.clientY - touchStartRef.current.y;
 
-    // Cross the 8px threshold → this is a drag, not a tap
     if (!hasDraggedRef.current && Math.abs(dx) >= TAP_THRESHOLD_PX) {
       hasDraggedRef.current = true;
     }
@@ -249,7 +377,6 @@ export default function SwipeScreen({ sessionId, session, participantId }: Props
     if (!touchStartRef.current) return;
 
     if (!hasDraggedRef.current) {
-      // Didn't move enough to be a drag — treat as a tap → toggle depth layer
       setExpanded((prev) => !prev);
       touchStartRef.current = null;
       return;
@@ -258,12 +385,10 @@ export default function SwipeScreen({ sessionId, session, participantId }: Props
     const threshold = cardWidthRef.current * COMMIT_RATIO;
 
     if (Math.abs(drag.x) >= threshold) {
-      // Past threshold — commit the swipe
       const direction = drag.x > 0 ? "right" : "left";
       setAnimPhase(direction === "right" ? "exit-right" : "exit-left");
       setTimeout(() => commitSwipe(direction), EXIT_MS);
     } else {
-      // Didn't reach threshold — snap back to center with spring
       setAnimPhase("snap-back");
       setTimeout(() => {
         setDrag({ x: 0, y: 0 });
@@ -274,7 +399,7 @@ export default function SwipeScreen({ sessionId, session, participantId }: Props
     touchStartRef.current = null;
   }
 
-  // ── Commit a swipe decision ───────────────────────────────────────────────
+  // ── Commit a swipe ─────────────────────────────────────────────────────────
 
   async function commitSwipe(direction: "right" | "left") {
     if (!currentCard || committing) return;
@@ -286,14 +411,12 @@ export default function SwipeScreen({ sessionId, session, participantId }: Props
     setDrag({ x: 0, y: 0 });
     setAnimPhase("idle");
 
-    // Write to Firebase
     await set(
       ref(db, `sessions/${sessionId}/swipeDecisions/${participantId}/${currentCard.id}`),
       direction
     );
 
-    // If all cards done, mark complete and potentially trigger end
-    if (Object.keys(newDecisions).length === RESTAURANTS.length) {
+    if (Object.keys(newDecisions).length === deck.length) {
       await set(ref(db, `sessions/${sessionId}/swipeComplete/${participantId}`), true);
 
       const allIds = Object.keys(session.participants || {});
@@ -311,30 +434,49 @@ export default function SwipeScreen({ sessionId, session, participantId }: Props
     setCommitting(false);
   }
 
-  // Trigger exit animation then commit — used by the tap buttons
   function tapSwipe(direction: "right" | "left") {
     if (committing) return;
     setAnimPhase(direction === "right" ? "exit-right" : "exit-left");
     setTimeout(() => commitSwipe(direction), EXIT_MS);
   }
 
-  // ── Match calculation (unchanged from V2) ─────────────────────────────────
+  // ── Match calculation ─────────────────────────────────────────────────────
 
   function calculateResults(
     allDecisions: Record<string, Record<string, string>>,
     allIds: string[]
-  ) {
+  ): { complete: RestaurantResult[]; majority: RestaurantResult[]; partial: RestaurantResult[] } {
     const total = allIds.length;
     const participants = session.participants || {};
-    const complete = [], majority = [], partial = [];
-    for (const r of RESTAURANTS) {
+    const complete: RestaurantResult[] = [];
+    const majority: RestaurantResult[] = [];
+    const partial: RestaurantResult[] = [];
+
+    for (const r of deck) {
       const matchedIds = allIds.filter((pid) => allDecisions[pid]?.[r.id] === "right");
       const matchedBy = matchedIds.map((pid) => participants[pid]?.name ?? pid);
-      const entry = { id: r.id, name: r.name, cuisine: r.cuisine, rating: r.rating, distance: r.distance, matchedBy };
+
+      const entry: RestaurantResult = {
+        id: r.id,
+        name: r.name,
+        cuisine: r.matchCategory,
+        rating: r.rating,
+        reviewCount: r.reviewCount,
+        priceLevel: r.priceLevel,
+        distance: `${r.distanceMiles} mi`,
+        photoUrl: r.photoUrl,
+        address: r.address,
+        phone: r.phone,
+        websiteUrl: r.websiteUrl,
+        location: r.location,
+        matchedBy,
+      };
+
       if (matchedIds.length === total)        complete.push(entry);
       else if (matchedIds.length > total / 2) majority.push(entry);
       else if (matchedIds.length > 0)         partial.push(entry);
     }
+
     return { complete, majority, partial };
   }
 
@@ -344,26 +486,31 @@ export default function SwipeScreen({ sessionId, session, participantId }: Props
     <main className="h-screen flex flex-col items-center justify-center bg-gray-950 text-white overflow-hidden">
       <div className="w-full max-w-sm flex flex-col items-center gap-5 px-4 h-full py-8">
 
-        {/* ── Card stack area — fills available height ── */}
+        {/* Card stack area */}
         <div className="relative w-full flex-1 min-h-0">
 
-          {/* Peek card — photo + gradient, no content (content reveals when the card rises) */}
+          {/* Peek card */}
           {nextCard && (
             <div
-              className="absolute inset-0 rounded-3xl bg-gray-800 overflow-hidden"
+              className="absolute inset-0 rounded-3xl overflow-hidden"
               style={{
                 transform: "scale(0.95) translateY(10px)",
                 zIndex: 0,
-                backgroundImage: `url(${nextCard.image})`,
-                backgroundSize: "cover",
-                backgroundPosition: "center",
+                backgroundColor: "#374151",
+                ...(nextCard.photoUrl
+                  ? {
+                      backgroundImage: `url(${nextCard.photoUrl})`,
+                      backgroundSize: "cover",
+                      backgroundPosition: "center",
+                    }
+                  : {}),
               }}
             >
               <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
             </div>
           )}
 
-          {/* Active card — key remounts on each new card so the advance animation fires */}
+          {/* Active card */}
           <SwipeCard
             key={currentCard.id}
             card={currentCard}
@@ -379,7 +526,7 @@ export default function SwipeScreen({ sessionId, session, participantId }: Props
           />
         </div>
 
-        {/* ── Pass / Yes tap buttons (gesture fallback) ── */}
+        {/* Pass / Yes buttons */}
         <div className="grid grid-cols-2 gap-4 w-full flex-shrink-0">
           <button
             onClick={() => tapSwipe("left")}

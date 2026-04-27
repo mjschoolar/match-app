@@ -1,6 +1,14 @@
 "use client";
-// The "use client" directive tells Next.js this page runs in the browser.
-// We need this because we use localStorage (browser-only) and Firebase.
+// app/page.tsx — session creation and join.
+//
+// V2.0 changes:
+//   - Location capture added to the creator flow.
+//   - After tapping "Create session," GPS is requested. If granted, the
+//     coordinates are reverse-geocoded to a neighborhood label and the session
+//     is created with that location written to Firebase.
+//   - If GPS is denied or unavailable, a manual address entry field appears.
+//     The session is not created until a valid location is confirmed.
+//   - Joiner flow is unchanged.
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -8,28 +16,114 @@ import { db } from "@/lib/firebase";
 import { ref, set, get } from "firebase/database";
 import { generateSessionId, generateParticipantId } from "@/lib/session";
 
-// The home screen has three states: the initial choice, start mode, and join mode.
-type Mode = "home" | "start" | "join";
+type Mode = "home" | "start" | "location-manual" | "join";
+
+interface LocationData {
+  lat: number;
+  lng: number;
+  label: string;
+  source: "gps" | "manual";
+}
 
 export default function Home() {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>("home");
   const [name, setName] = useState("");
   const [joinCode, setJoinCode] = useState("");
+  const [manualAddress, setManualAddress] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [locationStatus, setLocationStatus] = useState(""); // "Getting your location..." etc.
 
-  // Creator flow: generate a session ID, write the session to Firebase,
-  // add ourselves as the first participant, then navigate to the session page.
+  // ── Creator flow ────────────────────────────────────────────────────────────
+
+  // Called when the creator taps "Create session."
+  // Attempts GPS first; falls back to manual entry on denial.
   async function handleStartSession() {
     if (!name.trim()) return;
     setLoading(true);
     setError("");
+    setLocationStatus("Getting your location…");
 
-    // Always generate a fresh participant ID for each new session.
-    // We store it keyed to the session ID so that:
-    //   (a) a page refresh on this device recovers the same ID
-    //   (b) two tabs in the same browser each get their own ID (no collision)
+    try {
+      const coords = await new Promise<GeolocationCoordinates>((resolve, reject) => {
+        if (!navigator.geolocation) {
+          reject(new Error("Geolocation not supported"));
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(
+          (pos) => resolve(pos.coords),
+          (err) => reject(err),
+          { timeout: 10000, maximumAge: 30000 }
+        );
+      });
+
+      setLocationStatus("Pinning your location…");
+
+      // Reverse geocode to get a neighborhood label
+      const geoRes = await fetch("/api/geocode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lat: coords.latitude, lng: coords.longitude }),
+      });
+
+      const geoData = await geoRes.json();
+
+      await createSession({
+        lat: coords.latitude,
+        lng: coords.longitude,
+        label: geoData.label || "Your location",
+        source: "gps",
+      });
+    } catch {
+      // GPS denied or failed — show manual address entry
+      setLoading(false);
+      setLocationStatus("");
+      setMode("location-manual");
+    }
+  }
+
+  // Called when the creator submits a manual address.
+  async function handleManualLocation() {
+    if (!manualAddress.trim()) return;
+    setLoading(true);
+    setError("");
+    setLocationStatus("Finding that location…");
+
+    try {
+      const geoRes = await fetch("/api/geocode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address: manualAddress.trim() }),
+      });
+
+      if (!geoRes.ok) {
+        const err = await geoRes.json();
+        throw new Error(err.error || "Location not found");
+      }
+
+      const geoData = await geoRes.json();
+
+      await createSession({
+        lat: geoData.lat,
+        lng: geoData.lng,
+        label: geoData.label || manualAddress.trim(),
+        source: "manual",
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setError(
+        msg.includes("not found") || msg.includes("Location")
+          ? "We couldn't find that location — try a more specific address."
+          : "Failed to set location. Please try again."
+      );
+      setLoading(false);
+      setLocationStatus("");
+    }
+  }
+
+  // Creates the session in Firebase and navigates to the lobby.
+  async function createSession(location: LocationData) {
     const sessionId = generateSessionId();
     const participantId = generateParticipantId();
     localStorage.setItem(`participantId_${sessionId}`, participantId);
@@ -40,6 +134,12 @@ export default function Home() {
         phase: "lobby",
         creatorId: participantId,
         createdAt: now,
+        location: {
+          lat: location.lat,
+          lng: location.lng,
+          source: location.source,
+          label: location.label,
+        },
         participants: {
           [participantId]: {
             name: name.trim(),
@@ -49,27 +149,26 @@ export default function Home() {
       });
 
       router.push(`/session/${sessionId}`);
-    } catch (err: unknown) {
+    } catch {
       setError("Failed to create session. Please try again.");
       setLoading(false);
+      setLocationStatus("");
     }
   }
 
-  // Joiner flow: check the code is valid, add ourselves as a participant,
-  // then navigate to the same session page.
+  // ── Joiner flow (unchanged) ──────────────────────────────────────────────
+
   async function handleJoinSession() {
     if (!name.trim() || !joinCode.trim()) return;
     setLoading(true);
     setError("");
 
     const code = joinCode.trim().toUpperCase();
-    // Same logic as the creator: fresh ID per session, stored so refresh recovers it.
     const participantId = generateParticipantId();
     localStorage.setItem(`participantId_${code}`, participantId);
     const now = Date.now();
 
     try {
-      // First check the session exists
       const sessionSnap = await get(ref(db, `sessions/${code}`));
       if (!sessionSnap.exists()) {
         setError("Session not found. Double-check the code and try again.");
@@ -77,14 +176,13 @@ export default function Home() {
         return;
       }
 
-      // Add ourselves to the participants list
       await set(ref(db, `sessions/${code}/participants/${participantId}`), {
         name: name.trim(),
         joinedAt: now,
       });
 
       router.push(`/session/${code}`);
-    } catch (err: unknown) {
+    } catch {
       setError("Failed to join session. Please try again.");
       setLoading(false);
     }
@@ -96,7 +194,7 @@ export default function Home() {
 
         <h1 className="text-4xl font-bold text-center tracking-tight">Match</h1>
 
-        {/* ── Home: two entry points ── */}
+        {/* ── Home ── */}
         {mode === "home" && (
           <div className="space-y-4">
             <button
@@ -114,11 +212,11 @@ export default function Home() {
           </div>
         )}
 
-        {/* ── Start: name entry → create session ── */}
+        {/* ── Start: name entry ── */}
         {mode === "start" && (
           <div className="space-y-4">
             <button
-              onClick={() => { setMode("home"); setError(""); }}
+              onClick={() => { setMode("home"); setError(""); setLocationStatus(""); }}
               className="text-gray-400 text-sm"
             >
               ← Back
@@ -135,18 +233,62 @@ export default function Home() {
                 autoFocus
               />
             </div>
+            {locationStatus && (
+              <p className="text-gray-400 text-sm text-center">{locationStatus}</p>
+            )}
             {error && <p className="text-red-400 text-sm">{error}</p>}
             <button
               onClick={handleStartSession}
               disabled={!name.trim() || loading}
               className="w-full py-4 bg-white text-gray-950 rounded-2xl font-semibold text-lg disabled:opacity-40 cursor-pointer touch-manipulation"
             >
-              {loading ? "Creating..." : "Create session"}
+              {loading ? "Getting location…" : "Create session"}
             </button>
           </div>
         )}
 
-        {/* ── Join: code + name entry → join session ── */}
+        {/* ── Location manual entry (GPS denied) ── */}
+        {mode === "location-manual" && (
+          <div className="space-y-4">
+            <button
+              onClick={() => { setMode("start"); setError(""); setLocationStatus(""); }}
+              className="text-gray-400 text-sm"
+            >
+              ← Back
+            </button>
+            <div className="space-y-1">
+              <p className="text-lg font-semibold">Where are you?</p>
+              <p className="text-sm text-gray-400">
+                We need your location to find restaurants nearby.
+              </p>
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">Address or neighborhood</label>
+              <input
+                type="text"
+                value={manualAddress}
+                onChange={(e) => setManualAddress(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleManualLocation()}
+                placeholder="e.g. Uptown Dallas, TX"
+                className="w-full px-4 py-3 bg-gray-800 rounded-xl text-white placeholder-gray-500 outline-none focus:ring-2 focus:ring-white/20 text-lg"
+                autoFocus
+              />
+            </div>
+            {locationStatus && (
+              <p className="text-gray-400 text-sm text-center">{locationStatus}</p>
+            )}
+            {error && <p className="text-red-400 text-sm">{error}</p>}
+            <button
+              onClick={handleManualLocation}
+              disabled={!manualAddress.trim() || loading}
+              className="w-full py-4 bg-white text-gray-950 rounded-2xl font-semibold text-lg disabled:opacity-40 cursor-pointer touch-manipulation"
+            >
+              {loading ? "Finding location…" : "Use this location"}
+            </button>
+          </div>
+        )}
+
+        {/* ── Join ── */}
         {mode === "join" && (
           <div className="space-y-4">
             <button
@@ -184,7 +326,7 @@ export default function Home() {
               disabled={!name.trim() || !joinCode.trim() || loading}
               className="w-full py-4 bg-white text-gray-950 rounded-2xl font-semibold text-lg disabled:opacity-40 cursor-pointer touch-manipulation"
             >
-              {loading ? "Joining..." : "Join session"}
+              {loading ? "Joining…" : "Join session"}
             </button>
           </div>
         )}

@@ -1,49 +1,98 @@
 // lib/types.ts
 // Shared TypeScript types that match the data model in CLAUDE.md.
-// These keep our code safe — TypeScript will warn us if we try to use
-// a field that doesn't exist on a session object.
 
 export interface Participant {
   name: string;
   joinedAt: number;
 }
 
+// ── V2.0: real restaurant from Google Places, stored in Firebase stack ──────
+export interface StackRestaurant {
+  id: string;                       // Google Places place ID
+  name: string;
+  matchCategory: string;            // Match cuisine label (e.g. "Japanese")
+  rating: number;
+  reviewCount: number;
+  priceLevel: number | null;        // 1–4, or null if not set
+  photoUrl: string | null;          // Resolved CDN URL from photo media endpoint
+  address: string;
+  phone: string | null;
+  websiteUrl: string | null;
+  distanceMiles: number;
+  location: { lat: number; lng: number };
+  editorialSummary: string | null;
+  closingTime: string | null;       // e.g. "10:00 PM" — derived from currentOpeningHours
+  isOpenNow: boolean | null;
+  goodForGroups: boolean | null;
+  outdoorSeating: boolean | null;
+  reservable: boolean | null;
+  takeout: boolean | null;
+  delivery: boolean | null;
+  servesDrinks: boolean | null;     // true if any of beer/wine/cocktails is true
+  wheelchairAccessible: boolean | null;
+}
+
+// ── Match result written to Firebase after swipe completes ──────────────────
+// Includes all fields needed to render the summary screen + action layer.
 export interface RestaurantResult {
   id: string;
   name: string;
-  cuisine: string;
+  cuisine: string;                  // matchCategory at swipe time
   rating: number;
-  distance: string;
+  reviewCount: number;
+  priceLevel: number | null;
+  distance: string;                 // e.g. "1.4 mi"
+  photoUrl: string | null;
+  address: string;
+  phone: string | null;
+  websiteUrl: string | null;
+  location: { lat: number; lng: number } | null;
   matchedBy: string[];
 }
 
+// ── Full session object ──────────────────────────────────────────────────────
 export interface Session {
   phase: string;
   creatorId: string;
   createdAt: number;
   participants: Record<string, Participant>;
+
+  // V2.0: location captured at session creation
+  location?: {
+    lat: number;
+    lng: number;
+    source: "gps" | "manual";
+    label: string;
+  };
+
+  // V2.0: generated restaurant stack
+  stack?: {
+    generated: boolean;
+    generatedAt?: number;
+    reducedPool?: boolean;
+    error?: string;               // "thin-pool" | "api-failure"
+    restaurants?: StackRestaurant[] | Record<string, StackRestaurant>;
+  };
+
   responses?: {
     dineIn?: Record<string, string>;
     distance?: Record<string, number>;
     price?: Record<string, string>;
-    veto?: Record<string, string>; // cuisine ID string, or "pass" if participant passed
-    // vetoDone tracks who has tapped "Done" on the veto screen.
-    // Needed because Firebase can't store empty arrays — without this,
-    // "no vetoes selected" and "hasn't voted yet" would look identical.
+    veto?: Record<string, string>;    // cuisine ID string, or "pass"
     vetoDone?: Record<string, boolean>;
     dietary?: Record<string, string[]>;
-    // dietaryDone tracks submission for the same reason as vetoDone.
     dietaryDone?: Record<string, boolean>;
     preferences?: Record<string, string[]>;
-    // preferencesDone tracks who has locked in — same empty-array workaround.
     preferencesDone?: Record<string, boolean>;
     preferencesPositive?: Record<string, string[]>;
     preferencesPositiveDone?: Record<string, boolean>;
     preferencesNegative?: Record<string, string[]>;
     preferencesNegativeDone?: Record<string, boolean>;
   };
+
   swipeComplete?: Record<string, boolean>;
   swipeDecisions?: Record<string, Record<string, string>>;
+
   result?: {
     complete: RestaurantResult[];
     majority: RestaurantResult[];

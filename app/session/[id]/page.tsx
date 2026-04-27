@@ -204,6 +204,7 @@ export default function SessionPage() {
     return (
       <GeneratingStackScreen
         sessionId={sessionId}
+        session={session}
         isCreator={session.creatorId === participantId}
       />
     );

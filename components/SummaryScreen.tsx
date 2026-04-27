@@ -1,13 +1,12 @@
 "use client";
-// SummaryScreen — the final reveal.
+// SummaryScreen — V2.0: action layer on the primary match.
 //
-// V2 changes:
-//   - Cards are collapsed by default. All tiers visible simultaneously.
-//   - Single-card accordion: tapping opens the full depth layer;
-//     opening a second card collapses the first.
-//   - Expanded view includes: price, distance, rating, known for, hours
-//     (looked up from RESTAURANTS constant by id).
-//   - "Start over" button navigates each participant back to home individually.
+// V2.0 changes:
+//   - Primary match (first complete, or first majority if no complete) gets an action layer:
+//     address, "Get directions" link, "Call" button (if phone present), "Website" button (if present).
+//   - RestaurantResult now carries real data from the Places API (address, phone, websiteUrl, location).
+//   - Legacy RESTAURANTS fallback for prototype sessions without a generated stack.
+//   - Card expand/collapse behaviour unchanged.
 
 import { useState } from "react";
 import { Session, RestaurantResult } from "@/lib/types";
@@ -17,24 +16,85 @@ interface Props {
   session: Session;
 }
 
-// Look up the extra fields (price, knownFor, hours) from the static data
-function getRestaurantDetail(id: string) {
+// Fallback for legacy prototype sessions: look up knownFor/hours from RESTAURANTS constant
+function getLegacyDetail(id: string) {
   return RESTAURANTS.find((r) => r.id === id);
 }
+
+// ── Action layer ──────────────────────────────────────────────────────────────
+
+function ActionLayer({ r }: { r: RestaurantResult }) {
+  const mapsUrl = r.location
+    ? `https://maps.google.com/?q=${r.location.lat},${r.location.lng}`
+    : r.address
+    ? `https://maps.google.com/?q=${encodeURIComponent(r.address)}`
+    : null;
+
+  return (
+    <div className="px-4 pb-4 pt-3 border-t border-white/10 space-y-3">
+      {/* Address */}
+      {r.address && (
+        <p className="text-sm text-gray-300 leading-snug">{r.address}</p>
+      )}
+
+      {/* Action buttons */}
+      <div className="flex flex-wrap gap-2">
+        {mapsUrl && (
+          <a
+            href={mapsUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex-1 min-w-0 py-2.5 bg-white text-gray-950 rounded-xl text-sm font-semibold text-center touch-manipulation"
+          >
+            Get directions
+          </a>
+        )}
+        {r.phone && (
+          <a
+            href={`tel:${r.phone}`}
+            className="py-2.5 px-4 bg-gray-700 text-white rounded-xl text-sm font-semibold touch-manipulation"
+          >
+            Call
+          </a>
+        )}
+        {r.websiteUrl && (
+          <a
+            href={r.websiteUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="py-2.5 px-4 bg-gray-700 text-white rounded-xl text-sm font-semibold touch-manipulation"
+          >
+            Website
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Restaurant card ───────────────────────────────────────────────────────────
 
 function RestaurantCard({
   r,
   tier,
   isExpanded,
+  showActionLayer,
   onToggle,
 }: {
   r: RestaurantResult;
   tier: "complete" | "majority" | "partial";
   isExpanded: boolean;
+  showActionLayer: boolean;
   onToggle: () => void;
 }) {
-  const detail = getRestaurantDetail(r.id);
+  const legacy = getLegacyDetail(r.id);
   const highlight = tier === "complete";
+  const price = r.priceLevel ? ["$", "$$", "$$$", "$$$$"][r.priceLevel - 1] : null;
+  const reviewText = r.reviewCount > 0
+    ? r.reviewCount >= 1000
+      ? `${(r.reviewCount / 1000).toFixed(1)}k`
+      : `${r.reviewCount}`
+    : null;
 
   return (
     <div
@@ -43,7 +103,7 @@ function RestaurantCard({
         highlight ? "bg-white/10 border border-white/20" : "bg-gray-800",
       ].join(" ")}
     >
-      {/* ── Collapsed row — always visible ── */}
+      {/* Collapsed row */}
       <button
         onClick={onToggle}
         className="w-full px-4 py-3 flex items-center justify-between gap-3 text-left cursor-pointer touch-manipulation"
@@ -65,43 +125,57 @@ function RestaurantCard({
         </span>
       </button>
 
-      {/* ── Expanded depth layer ── */}
+      {/* Expanded detail */}
       {isExpanded && (
-        <div className="px-4 pb-4 space-y-3 border-t border-white/10 pt-3">
-          {/* Key stats row */}
-          <div className="flex gap-4 text-sm">
-            <span className="text-white font-medium">★ {r.rating}</span>
-            {detail?.price && (
-              <span className="text-gray-300">{detail.price}</span>
+        <div className="border-t border-white/10">
+          <div className="px-4 pb-3 pt-3 space-y-3">
+            {/* Stats row */}
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+              <span className="text-white font-medium">★ {r.rating}</span>
+              {reviewText && (
+                <span className="text-gray-400">{reviewText} reviews</span>
+              )}
+              {price && <span className="text-gray-300">{price}</span>}
+              <span className="text-gray-400">{r.distance}</span>
+            </div>
+
+            {/* Legacy knownFor for prototype sessions */}
+            {!r.address && legacy?.knownFor && (
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wider mb-0.5">Known for</p>
+                <p className="text-sm text-gray-300">{legacy.knownFor}</p>
+              </div>
             )}
-            <span className="text-gray-400">{r.distance}</span>
+
+            {/* Legacy hours for prototype sessions */}
+            {!r.address && legacy?.hours && (
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wider mb-0.5">Hours</p>
+                <p className="text-sm text-gray-300">{legacy.hours}</p>
+              </div>
+            )}
           </div>
 
-          {/* Known for */}
-          {detail?.knownFor && (
-            <div>
-              <p className="text-xs text-gray-500 uppercase tracking-wider mb-0.5">Known for</p>
-              <p className="text-sm text-gray-300">{detail.knownFor}</p>
-            </div>
-          )}
-
-          {/* Hours */}
-          {detail?.hours && (
-            <div>
-              <p className="text-xs text-gray-500 uppercase tracking-wider mb-0.5">Hours</p>
-              <p className="text-sm text-gray-300">{detail.hours}</p>
-            </div>
-          )}
+          {/* Action layer — only for the primary match */}
+          {showActionLayer && <ActionLayer r={r} />}
         </div>
+      )}
+
+      {/* Action layer is always visible on the primary match card
+          (not just in expanded state) when it's the top result */}
+      {showActionLayer && !isExpanded && (r.address || r.phone || r.websiteUrl || r.location) && (
+        <ActionLayer r={r} />
       )}
     </div>
   );
 }
 
+// ── Main component ─────────────────────────────────────────────────────────────
+
 export default function SummaryScreen({ session }: Props) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // Firebase may return arrays as objects with integer keys — normalise both
+  // Firebase may return arrays as objects with integer keys — normalise
   function toArray(val: unknown): RestaurantResult[] {
     if (!val) return [];
     if (Array.isArray(val)) return val;
@@ -110,11 +184,13 @@ export default function SummaryScreen({ session }: Props) {
 
   const complete = toArray(session.result?.complete);
   const majority = toArray(session.result?.majority);
-  const partial = toArray(session.result?.partial);
+  const partial  = toArray(session.result?.partial);
   const hasAnyMatch = complete.length > 0 || majority.length > 0 || partial.length > 0;
 
+  // The primary match is the first complete match, or the first majority match if none
+  const primaryMatch = complete[0] ?? majority[0] ?? null;
+
   function handleToggle(id: string) {
-    // If this card is already open, close it. Otherwise open it (and close any other).
     setExpandedId((prev) => (prev === id ? null : id));
   }
 
@@ -140,6 +216,7 @@ export default function SummaryScreen({ session }: Props) {
                 r={r}
                 tier="complete"
                 isExpanded={expandedId === r.id}
+                showActionLayer={r.id === primaryMatch?.id}
                 onToggle={() => handleToggle(r.id)}
               />
             ))}
@@ -158,6 +235,7 @@ export default function SummaryScreen({ session }: Props) {
                 r={r}
                 tier="majority"
                 isExpanded={expandedId === r.id}
+                showActionLayer={r.id === primaryMatch?.id && complete.length === 0}
                 onToggle={() => handleToggle(r.id)}
               />
             ))}
@@ -176,21 +254,24 @@ export default function SummaryScreen({ session }: Props) {
                 r={r}
                 tier="partial"
                 isExpanded={expandedId === r.id}
+                showActionLayer={false}
                 onToggle={() => handleToggle(r.id)}
               />
             ))}
           </div>
         )}
 
-        {/* ── No matches at all ── */}
+        {/* ── No matches ── */}
         {!hasAnyMatch && (
           <div className="text-center space-y-2 py-8">
             <p className="text-xl font-semibold">Your tastes were all over the map.</p>
-            <p className="text-gray-400 text-sm">Nobody agreed on anything — try again with fewer constraints.</p>
+            <p className="text-gray-400 text-sm">
+              Nobody agreed on anything — try again with fewer constraints.
+            </p>
           </div>
         )}
 
-        {/* ── Restart — each participant navigates home independently ── */}
+        {/* ── Start over ── */}
         <button
           onClick={handleStartOver}
           className="w-full py-4 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-2xl font-semibold text-lg cursor-pointer touch-manipulation mt-4"

@@ -1,13 +1,16 @@
 "use client";
-// DistanceScreen — Pre-swipe step 2 of 6.
+// DistanceScreen — Pre-swipe step 2.
 //
-// V2 changes:
-//   - "N of 3 locked in" counter replaces the named response list during voting
-//   - Slider stays visible in locked/disabled state after submitting
-//   - 1000ms delay before phase advances on the last submission
-//   - Tiebreaker: median (changed from minimum in V1)
+// V2.0 changes:
+//   - Max radius changed from 30 to 15 miles (brief spec).
+//   - Default is 5 miles (Dallas-calibrated starting point).
+//   - Live option count: "5 miles — about 43 places" debounced at 600ms after drag.
+//     Reads from /api/location-count using the session's stored location.
+//   - "lots of spots" shown when count hits the API's 20-result page limit (hasMore: true).
+//   - Loading shimmer while count is fetching.
+//   - Count cached per radius so dragging back to a queried value shows instantly.
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { db } from "@/lib/firebase";
 import { ref, set, get } from "firebase/database";
 import { Session } from "@/lib/types";
@@ -18,34 +21,106 @@ interface Props {
   participantId: string;
 }
 
+const MIN_MILES = 1;
+const MAX_MILES = 15;
+const DEFAULT_MILES = 5;
+
+type CountState = { count: number; hasMore: boolean } | "loading" | null;
+
 export default function DistanceScreen({ sessionId, session, participantId }: Props) {
-  const [sliderValue, setSliderValue] = useState(3);
+  const [sliderValue, setSliderValue] = useState(DEFAULT_MILES);
+  const [countState, setCountState] = useState<CountState>(null);
+
+  // Cache: radiusMiles → { count, hasMore } so dragging back to a queried value is instant
+  const countCache = useRef<Map<number, { count: number; hasMore: boolean }>>(new Map());
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isReveal = session.phase === "distance-reveal";
   const isCreator = session.creatorId === participantId;
   const participants = Object.entries(session.participants || {});
   const totalParticipants = participants.length;
   const responses = session.responses?.distance || {};
-  const myResponse = responses[participantId]; // undefined until submitted
+  const myResponse = responses[participantId];
   const creatorName = session.participants[session.creatorId]?.name ?? "the host";
 
   const totalResponded = Object.keys(responses).length;
   const iAmLocked = myResponse !== undefined;
 
-  // Determine group dine-in outcome from individual votes
   const dineInVotes = Object.values(session.responses?.dineIn || {});
   const deliveryCount = dineInVotes.filter((v) => v === "delivery").length;
   const isDelivery = deliveryCount > dineInVotes.length / 2;
 
+  const locationLat = session.location?.lat;
+  const locationLng = session.location?.lng;
+
+  // Fetch count for a given radius value
+  const fetchCount = useCallback(
+    async (miles: number) => {
+      if (!locationLat || !locationLng) return;
+
+      // Check cache first
+      const cached = countCache.current.get(miles);
+      if (cached) {
+        setCountState(cached);
+        return;
+      }
+
+      setCountState("loading");
+
+      try {
+        const radiusMeters = miles * 1609.34;
+        const res = await fetch("/api/location-count", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ lat: locationLat, lng: locationLng, radiusMeters }),
+        });
+
+        if (!res.ok) throw new Error("Count failed");
+
+        const data = await res.json() as { count: number; hasMore: boolean };
+        countCache.current.set(miles, data);
+        setCountState(data);
+      } catch {
+        setCountState(null);
+      }
+    },
+    [locationLat, locationLng]
+  );
+
+  // Fetch count on mount for the default value
+  useEffect(() => {
+    if (!isReveal && !iAmLocked && locationLat && locationLng) {
+      fetchCount(DEFAULT_MILES);
+    }
+  }, [isReveal, iAmLocked, locationLat, locationLng, fetchCount]);
+
+  // Debounced count fetch on slider change
+  function handleSliderChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (iAmLocked) return;
+    const val = Number(e.target.value);
+    setSliderValue(val);
+
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => {
+      fetchCount(val);
+    }, 600);
+  }
+
+  function formatCountLabel(miles: number, state: CountState): string {
+    if (!state || state === "loading") return `${miles} mi`;
+    if (state.hasMore) return `${miles} mi — lots of spots`;
+    if (state.count === 0) return `${miles} mi — no spots nearby`;
+    return `${miles} mi — about ${state.count} places`;
+  }
+
   async function handleSubmit() {
-    if (iAmLocked) return; // guard against double-tap
+    if (iAmLocked) return;
 
     await set(
       ref(db, `sessions/${sessionId}/responses/distance/${participantId}`),
       sliderValue
     );
 
-    // Fresh read to avoid race condition
     const allIds = Object.keys(session.participants || {});
     const snap = await get(ref(db, `sessions/${sessionId}/responses/distance`));
     const current = snap.val() || {};
@@ -61,12 +136,10 @@ export default function DistanceScreen({ sessionId, session, participantId }: Pr
     await set(ref(db, `sessions/${sessionId}/phase`), "price");
   }
 
-  // V2 tiebreaker: median distance (not minimum)
   function getMedianDistance(): number {
     const values = (Object.values(responses) as number[]).sort((a, b) => a - b);
     if (values.length === 0) return 0;
     const mid = Math.floor(values.length / 2);
-    // Odd count: middle value. Even count: average of the two middle values, rounded.
     return values.length % 2 !== 0 ? values[mid] : Math.round((values[mid - 1] + values[mid]) / 2);
   }
 
@@ -80,11 +153,9 @@ export default function DistanceScreen({ sessionId, session, participantId }: Pr
         ? `Everyone's keeping it close — looking within ${median} mile${median === 1 ? "" : "s"}.`
         : `Everyone's on the same page — looking within ${median} miles.`;
     }
-    // Spread exists — acknowledge the middle-ground feel
     return `Splitting the difference — looking within ${median} miles.`;
   }
 
-  // The display value for the slider in locked state
   const lockedDisplayValue = iAmLocked ? myResponse : sliderValue;
 
   return (
@@ -100,29 +171,42 @@ export default function DistanceScreen({ sessionId, session, participantId }: Pr
           )}
         </div>
 
-        {/* ── VOTING STATE — slider always visible, locked after submitting ── */}
+        {/* ── VOTING STATE ── */}
         {!isReveal && (
           <>
             <div className="space-y-4 bg-gray-800 rounded-2xl p-5">
-              {/* Value display */}
+              {/* Value + live count display */}
               <div className="text-center">
                 <span className="text-4xl font-bold">{lockedDisplayValue}</span>
                 <span className="text-gray-400 text-lg ml-1">mi</span>
                 {iAmLocked && (
                   <span className="ml-3 text-green-400 text-sm font-medium">Locked in ✓</span>
                 )}
+
+                {/* Live count — shown when not locked, location available */}
+                {!iAmLocked && locationLat && locationLng && (
+                  <div className="mt-2 h-5">
+                    {countState === "loading" ? (
+                      <span className="text-xs text-gray-600 animate-pulse">
+                        Counting spots…
+                      </span>
+                    ) : countState ? (
+                      <span className="text-xs text-gray-400">
+                        {formatCountLabel(sliderValue, countState).split(" — ")[1] ?? ""}
+                      </span>
+                    ) : null}
+                  </div>
+                )}
               </div>
 
-              {/* Slider — disabled after locking in */}
+              {/* Slider */}
               <input
                 type="range"
-                min={1}
-                max={30}
+                min={MIN_MILES}
+                max={MAX_MILES}
                 step={1}
                 value={iAmLocked ? myResponse : sliderValue}
-                onChange={(e) => {
-                  if (!iAmLocked) setSliderValue(Number(e.target.value));
-                }}
+                onChange={handleSliderChange}
                 disabled={iAmLocked}
                 className={[
                   "w-full accent-white",
@@ -131,10 +215,10 @@ export default function DistanceScreen({ sessionId, session, participantId }: Pr
               />
               <div className="flex justify-between text-sm text-gray-500">
                 <span>1 mi</span>
-                <span>30 mi</span>
+                <span>15 mi</span>
               </div>
 
-              {/* Submit button — hidden after locking in */}
+              {/* Submit */}
               {!iAmLocked && (
                 <button
                   onClick={handleSubmit}
@@ -145,14 +229,13 @@ export default function DistanceScreen({ sessionId, session, participantId }: Pr
               )}
             </div>
 
-            {/* Response progress — no names, just count */}
             <p className="text-center text-sm text-gray-400">
               {totalResponded} of {totalParticipants} locked in
             </p>
           </>
         )}
 
-        {/* ── REVEAL STATE — named attribution list ── */}
+        {/* ── REVEAL STATE ── */}
         {isReveal && (
           <>
             <div className="space-y-2">
@@ -190,7 +273,7 @@ export default function DistanceScreen({ sessionId, session, participantId }: Pr
 
             {!isCreator && (
               <p className="text-center text-gray-400 text-sm pt-2">
-                Waiting for {creatorName} to continue...
+                Waiting for {creatorName} to continue…
               </p>
             )}
           </>
