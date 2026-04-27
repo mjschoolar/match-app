@@ -8,11 +8,11 @@
 // Firebase (because one participant's action triggered it), every device
 // gets the update simultaneously and re-renders.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { db } from "@/lib/firebase";
-import { ref, onValue } from "firebase/database";
-import { Session } from "@/lib/types";
+import { ref, onValue, set } from "firebase/database";
+import { Session, StackRestaurant, RestaurantResult } from "@/lib/types";
 import LobbyScreen from "@/components/LobbyScreen";
 import DineInScreen from "@/components/DineInScreen";
 import DistanceScreen from "@/components/DistanceScreen";
@@ -35,6 +35,8 @@ export default function SessionPage() {
   const [session, setSession] = useState<Session | null>(null);
   const [participantId, setParticipantId] = useState<string>("");
   const [notFound, setNotFound] = useState(false);
+  // Guard so the swipe-completion watcher only fires once per session
+  const swipeAdvancedRef = useRef(false);
 
   useEffect(() => {
     // Read the participant's own ID from localStorage.
@@ -57,6 +59,69 @@ export default function SessionPage() {
 
     return () => unsubscribe();
   }, [sessionId]);
+
+  // ── Swipe completion watcher ──────────────────────────────────────────────
+  // This runs on every Firebase update and advances the phase the moment all
+  // participants finish swiping. Intentionally lives here in page.tsx rather
+  // than inside SwipeScreen — page.tsx stays mounted through WaitingScreen, so
+  // this fires reliably even if SwipeScreen is unmounted when the last device
+  // finishes. Any device can trigger it; the write is idempotent.
+  useEffect(() => {
+    if (!session || !participantId) return;
+    if (session.phase !== "swipe") return;
+    if (swipeAdvancedRef.current) return;
+
+    const allIds = Object.keys(session.participants || {});
+    if (allIds.length === 0) return;
+
+    const allDone = allIds.every((id) => session.swipeComplete?.[id] === true);
+    if (!allDone) return;
+
+    swipeAdvancedRef.current = true;
+
+    // Normalise Firebase arrays-stored-as-objects → real arrays
+    function toArr<T>(val: unknown): T[] {
+      if (!val) return [];
+      if (Array.isArray(val)) return val as T[];
+      return Object.values(val as Record<string, T>);
+    }
+
+    const restaurants = toArr<StackRestaurant>(session.stack?.restaurants);
+    const participants = session.participants || {};
+    const swipeDecisions = (session.swipeDecisions || {}) as Record<string, Record<string, string>>;
+    const total = allIds.length;
+
+    const complete: RestaurantResult[] = [];
+    const majority: RestaurantResult[] = [];
+    const partial: RestaurantResult[] = [];
+
+    for (const r of restaurants) {
+      const matchedIds = allIds.filter((pid) => swipeDecisions[pid]?.[r.id] === "right");
+      const matchedBy = matchedIds.map((pid) => participants[pid]?.name ?? pid);
+      const entry: RestaurantResult = {
+        id: r.id,
+        name: r.name,
+        cuisine: r.matchCategory,
+        rating: r.rating,
+        reviewCount: r.reviewCount,
+        priceLevel: r.priceLevel,
+        distance: `${r.distanceMiles} mi`,
+        photoUrl: r.photoUrl,
+        address: r.address,
+        phone: r.phone,
+        websiteUrl: r.websiteUrl,
+        location: r.location,
+        matchedBy,
+      };
+      if (matchedIds.length === total)        complete.push(entry);
+      else if (matchedIds.length > total / 2) majority.push(entry);
+      else if (matchedIds.length > 0)         partial.push(entry);
+    }
+
+    set(ref(db, `sessions/${sessionId}/result`), { complete, majority, partial })
+      .then(() => set(ref(db, `sessions/${sessionId}/phase`), "anticipation"))
+      .catch(console.error);
+  }, [session, participantId, sessionId]);
 
   // ── Loading states ──
   if (notFound) {
