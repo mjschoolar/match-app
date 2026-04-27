@@ -64,8 +64,7 @@ export default function DietaryScreen({ sessionId, session, participantId }: Pro
     const allDone = allIds.every((id) => current[id] === true);
 
     if (allDone) {
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      await set(ref(db, `sessions/${sessionId}/phase`), "generating-stack");
+      await set(ref(db, `sessions/${sessionId}/phase`), "preferences-positive");
     }
   }
 

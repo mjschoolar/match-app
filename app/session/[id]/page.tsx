@@ -19,6 +19,8 @@ import DistanceScreen from "@/components/DistanceScreen";
 import PriceScreen from "@/components/PriceScreen";
 import VetoScreen from "@/components/VetoScreen";
 import DietaryScreen from "@/components/DietaryScreen";
+import PreferencesPositiveScreen from "@/components/PreferencesPositiveScreen";
+import PreferencesNegativeScreen from "@/components/PreferencesNegativeScreen";
 import PreferencesScreen from "@/components/PreferencesScreen";
 import SwipeScreen from "@/components/SwipeScreen";
 import WaitingScreen from "@/components/WaitingScreen";
@@ -153,7 +155,27 @@ export default function SessionPage() {
     );
   }
 
-  if (session.phase === "preferences" || session.phase === "preferences-reveal") {
+  if (session.phase === "preferences-positive") {
+    return (
+      <PreferencesPositiveScreen
+        sessionId={sessionId}
+        session={session}
+        participantId={participantId}
+      />
+    );
+  }
+
+  if (session.phase === "preferences-negative") {
+    return (
+      <PreferencesNegativeScreen
+        sessionId={sessionId}
+        session={session}
+        participantId={participantId}
+      />
+    );
+  }
+
+  if (session.phase === "preferences-reveal") {
     return (
       <PreferencesScreen
         sessionId={sessionId}

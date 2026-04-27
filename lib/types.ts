@@ -37,6 +37,10 @@ export interface Session {
     preferences?: Record<string, string[]>;
     // preferencesDone tracks who has locked in — same empty-array workaround.
     preferencesDone?: Record<string, boolean>;
+    preferencesPositive?: Record<string, string[]>;
+    preferencesPositiveDone?: Record<string, boolean>;
+    preferencesNegative?: Record<string, string[]>;
+    preferencesNegativeDone?: Record<string, boolean>;
   };
   swipeComplete?: Record<string, boolean>;
   swipeDecisions?: Record<string, Record<string, string>>;
