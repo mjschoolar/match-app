@@ -31,6 +31,14 @@ export default function PreferencesNegativeScreen({ sessionId, session, particip
 
   const iAmDone = lockedIn || !!prefNegativeDone[participantId];
 
+  // Participant's own positive picks — these tiles are shown as disabled-selected
+  // (green with check) and cannot be marked negative.
+  const myPositivePicks = new Set<string>(
+    Array.isArray(session.responses?.preferencesPositive?.[participantId])
+      ? session.responses!.preferencesPositive![participantId]
+      : []
+  );
+
   function othersMarkCountFor(cuisineId: string): number {
     return Object.entries(prefNegativeResponses)
       .filter(([pid, v]) => pid !== participantId && Array.isArray(v) && (v as string[]).includes(cuisineId))
@@ -38,7 +46,7 @@ export default function PreferencesNegativeScreen({ sessionId, session, particip
   }
 
   function toggleCuisine(id: string) {
-    if (iAmDone) return;
+    if (iAmDone || myPositivePicks.has(id)) return;
     const isSelected = localSelections.includes(id);
     if (!isSelected && localSelections.length >= PREF_CAP) return;
 
@@ -103,6 +111,7 @@ export default function PreferencesNegativeScreen({ sessionId, session, particip
 
         <div className="grid grid-cols-3 gap-2">
           {CUISINES.map((cuisine) => {
+            const isMyPositivePick = myPositivePicks.has(cuisine.id);
             const iMine = localSelections.includes(cuisine.id);
             const othersCount = othersMarkCountFor(cuisine.id);
             const atMax = !iMine && localSelections.length >= PREF_CAP;
@@ -111,10 +120,12 @@ export default function PreferencesNegativeScreen({ sessionId, session, particip
               <button
                 key={cuisine.id}
                 onClick={() => toggleCuisine(cuisine.id)}
-                disabled={atMax || iAmDone}
+                disabled={isMyPositivePick || atMax || iAmDone}
                 className={[
                   "py-3 px-2 rounded-xl text-sm font-medium transition-colors touch-manipulation",
-                  iMine
+                  isMyPositivePick
+                    ? "bg-green-500/20 text-green-300 border border-green-500/40 cursor-default"
+                    : iMine
                     ? "bg-red-500/20 text-red-300 border border-red-500/40 cursor-pointer"
                     : atMax && othersCount > 0
                     ? "bg-red-500/10 text-red-300/70 border border-red-500/20 cursor-default opacity-60"
@@ -127,7 +138,8 @@ export default function PreferencesNegativeScreen({ sessionId, session, particip
                     : "bg-gray-800 text-gray-300 hover:bg-gray-700 cursor-pointer",
                 ].join(" ")}
               >
-                {(iMine || othersCount > 0) && <span className="mr-1">✕</span>}
+                {isMyPositivePick && <span className="mr-1">✓</span>}
+                {!isMyPositivePick && (iMine || othersCount > 0) && <span className="mr-1">✕</span>}
                 {cuisine.label}
                 {othersCount > 1 && (
                   <span className="ml-1 text-xs font-normal opacity-60">({othersCount})</span>
