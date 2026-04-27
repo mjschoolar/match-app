@@ -140,13 +140,13 @@ export default function VetoScreen({ sessionId, session, participantId }: Props)
                       isMyVeto
                         ? "bg-red-500/20 text-red-300 border border-red-500/40 cursor-default"
                         : isPending
-                        ? "bg-white text-gray-950 cursor-pointer"
+                        ? "bg-red-500/20 text-red-300 border border-red-500/40 cursor-pointer"
                         : iAmDone
                         ? "bg-gray-800 text-gray-600 cursor-default"
                         : "bg-gray-800 text-gray-300 hover:bg-gray-700 cursor-pointer",
                     ].join(" ")}
                   >
-                    {isMyVeto && <span className="mr-1">✕</span>}
+                    {(isMyVeto || isPending) && <span className="mr-1">✕</span>}
                     {cuisine.label}
                   </button>
                 );
