@@ -137,10 +137,16 @@ const ADJACENCY: Record<string, string[]> = {
 };
 
 // Price tier → Google Places API enum values (ceiling model)
+//
+// Google's PRICE_LEVEL_INEXPENSIVE ≈ fast food only (McDonald's, Chipotle).
+// PRICE_LEVEL_MODERATE ≈ casual sit-down restaurants — what most people mean by "$".
+// So each app tier is mapped one step higher than its literal symbol to match
+// real-world expectations. A $ voter protects the group from expensive/fine-dining
+// restaurants but still gets a full pool of casual spots.
 const PRICE_LEVEL_MAP: Record<string, string[]> = {
-  "$":    ["PRICE_LEVEL_INEXPENSIVE"],
-  "$$":   ["PRICE_LEVEL_INEXPENSIVE", "PRICE_LEVEL_MODERATE"],
-  "$$$":  ["PRICE_LEVEL_INEXPENSIVE", "PRICE_LEVEL_MODERATE", "PRICE_LEVEL_EXPENSIVE"],
+  "$":    ["PRICE_LEVEL_INEXPENSIVE", "PRICE_LEVEL_MODERATE"],
+  "$$":   ["PRICE_LEVEL_INEXPENSIVE", "PRICE_LEVEL_MODERATE", "PRICE_LEVEL_EXPENSIVE"],
+  "$$$":  ["PRICE_LEVEL_INEXPENSIVE", "PRICE_LEVEL_MODERATE", "PRICE_LEVEL_EXPENSIVE", "PRICE_LEVEL_VERY_EXPENSIVE"],
   "$$$$": ["PRICE_LEVEL_INEXPENSIVE", "PRICE_LEVEL_MODERATE", "PRICE_LEVEL_EXPENSIVE", "PRICE_LEVEL_VERY_EXPENSIVE"],
 };
 
@@ -575,10 +581,10 @@ export async function POST(req: NextRequest) {
 
     const priceResponses = responses.price || {};
     const priceVotes = Object.values(priceResponses) as string[];
-    // Use the most permissive (highest) tier anyone voted for as the ceiling.
-    // e.g. if votes are ["$$", "$$$"], ceiling is "$$$" → includes $, $$, $$$.
-    // This avoids thin-pool from over-filtering by price.
-    const resolvedPrice = [...PRICE_TIERS].reverse().find((tier) => priceVotes.includes(tier)) ?? "$$$$";
+    // Cheapest-wins: the lowest tier anyone voted for sets the ceiling.
+    // Protects the budget-constrained participant — if someone voted "$", the
+    // group won't be shown expensive restaurants even if others voted higher.
+    const resolvedPrice = PRICE_TIERS.find((tier) => priceVotes.includes(tier)) ?? "$$$$";
     const priceLevels = PRICE_LEVEL_MAP[resolvedPrice] || PRICE_LEVEL_MAP["$$$$"];
 
     // Union of all dietary restrictions across the group
