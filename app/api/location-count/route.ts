@@ -36,6 +36,8 @@ export async function POST(req: NextRequest) {
         "X-Goog-FieldMask": "places.id",
       },
       body: JSON.stringify({
+        // Filter to restaurants only — otherwise gas stations and shops inflate the count
+        includedTypes: ["restaurant"],
         locationRestriction: {
           circle: {
             center: { latitude: lat, longitude: lng },

@@ -127,6 +127,12 @@ export default function GeneratingStackScreen({ sessionId, session, isCreator }:
             We couldn&apos;t find enough restaurants that matched. Try expanding your distance
             or choosing a different price range.
           </p>
+          <button
+            onClick={() => { window.location.href = "/"; }}
+            className="w-full py-4 bg-gray-800 text-gray-300 rounded-2xl font-semibold text-lg cursor-pointer touch-manipulation"
+          >
+            Start over
+          </button>
         </div>
       </main>
     );
@@ -141,6 +147,12 @@ export default function GeneratingStackScreen({ sessionId, session, isCreator }:
             We couldn&apos;t pull the restaurant data. Check your connection and try again.
           </p>
           <p className="text-gray-600 text-xs font-mono">{sessionId}</p>
+          <button
+            onClick={() => { window.location.href = "/"; }}
+            className="w-full py-4 bg-gray-800 text-gray-300 rounded-2xl font-semibold text-lg cursor-pointer touch-manipulation"
+          >
+            Start over
+          </button>
         </div>
       </main>
     );
@@ -155,6 +167,12 @@ export default function GeneratingStackScreen({ sessionId, session, isCreator }:
             We couldn&apos;t pull the restaurant data. Check your connection and try again.
           </p>
           <p className="text-gray-600 text-xs font-mono">{sessionId}</p>
+          <button
+            onClick={() => { window.location.href = "/"; }}
+            className="w-full py-4 bg-gray-800 text-gray-300 rounded-2xl font-semibold text-lg cursor-pointer touch-manipulation"
+          >
+            Start over
+          </button>
         </div>
       </main>
     );

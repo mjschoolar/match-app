@@ -187,7 +187,7 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
             onClick={handleContinue}
             className="w-full py-4 bg-white text-gray-950 rounded-2xl font-semibold text-lg cursor-pointer touch-manipulation mt-2"
           >
-            Let&apos;s find out
+            Continue
           </button>
         ) : (
           <p className="text-center text-gray-400 text-sm">

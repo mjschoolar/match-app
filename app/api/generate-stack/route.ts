@@ -222,75 +222,54 @@ function shuffle<T>(arr: T[]): T[] {
 
 // ── Google Places API calls ───────────────────────────────────────────────────
 
-// Query one category, paginating until we have enough results for good sampling headroom.
-// Returns raw Google Places results (not yet filtered or transformed).
+// Query one category — single fetch, 20 results max.
+// No pagination: keeps Vercel function time well within the 10-second Hobby limit.
+// All category queries run in parallel (Promise.all), so total time ≈ slowest single call.
 async function queryCategory(
   cuisineId: string,
   lat: number,
   lng: number,
   radiusMeters: number,
   priceLevels: string[],
-  slotsNeeded: number
 ): Promise<Record<string, unknown>[]> {
   const key = process.env.GOOGLE_PLACES_API_KEY!;
   const placeType = TYPE_MAP[cuisineId];
   if (!placeType) return [];
 
-  const target = Math.max(slotsNeeded * 3, 20); // collect 3× slots for sampling headroom
-  const results: Record<string, unknown>[] = [];
-  let pageToken: string | undefined;
-
-  do {
-    const body: Record<string, unknown> = {
-      includedTypes: [placeType],
-      locationRestriction: {
-        circle: {
-          center: { latitude: lat, longitude: lng },
-          radius: radiusMeters,
-        },
+  const body: Record<string, unknown> = {
+    includedTypes: [placeType],
+    locationRestriction: {
+      circle: {
+        center: { latitude: lat, longitude: lng },
+        radius: radiusMeters,
       },
-      maxResultCount: 20,
-    };
+    },
+    maxResultCount: 20,
+  };
 
-    // Apply price filter only if not the most permissive level
-    if (priceLevels.length < 4) {
-      body.includedPriceLevels = priceLevels;
-    }
+  // Apply price filter only when it's not fully permissive
+  if (priceLevels.length < 4) {
+    body.includedPriceLevels = priceLevels;
+  }
 
-    if (pageToken) {
-      body.pageToken = pageToken;
-    }
+  const resp = await fetch(NEARBY_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": key,
+      "X-Goog-FieldMask": FIELD_MASK,
+    },
+    body: JSON.stringify(body),
+  });
 
-    const resp = await fetch(NEARBY_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": key,
-        "X-Goog-FieldMask": FIELD_MASK,
-      },
-      body: JSON.stringify(body),
-    });
+  const data = await resp.json();
 
-    const data = await resp.json();
+  if (data.error) {
+    console.error(`[generate-stack] Places API error for ${cuisineId}:`, data.error);
+    return [];
+  }
 
-    if (data.error) {
-      console.error(`[generate-stack] Places API error for ${cuisineId}:`, data.error);
-      break;
-    }
-
-    results.push(...(data.places || []));
-    pageToken = data.nextPageToken;
-
-    // Stop if we have enough
-    if (results.length >= target) break;
-
-    // Google requires a brief pause before the next page token is usable
-    if (pageToken) {
-      await new Promise((r) => setTimeout(r, 1500));
-    }
-  } while (pageToken);
-
-  return results;
+  return data.places || [];
 }
 
 // ── Quality and availability filters ─────────────────────────────────────────
@@ -299,9 +278,9 @@ function passesQualityFloor(place: Record<string, unknown>): boolean {
   const rating = place.rating as number | undefined;
   const reviews = place.userRatingCount as number | undefined;
   if (rating === undefined || rating === null) return false;
-  if (rating < 4.0) return false;
+  if (rating < 3.8) return false;
   if (reviews === undefined || reviews === null) return false;
-  if (reviews < 50) return false;
+  if (reviews < 30) return false;
   return true;
 }
 
@@ -596,8 +575,10 @@ export async function POST(req: NextRequest) {
 
     const priceResponses = responses.price || {};
     const priceVotes = Object.values(priceResponses) as string[];
-    // Tiebreaker: lowest (cheapest) tier that anyone voted for (matches PriceScreen logic)
-    const resolvedPrice = PRICE_TIERS.find((tier) => priceVotes.includes(tier)) ?? "$$$$";
+    // Use the most permissive (highest) tier anyone voted for as the ceiling.
+    // e.g. if votes are ["$$", "$$$"], ceiling is "$$$" → includes $, $$, $$$.
+    // This avoids thin-pool from over-filtering by price.
+    const resolvedPrice = [...PRICE_TIERS].reverse().find((tier) => priceVotes.includes(tier)) ?? "$$$$";
     const priceLevels = PRICE_LEVEL_MAP[resolvedPrice] || PRICE_LEVEL_MAP["$$$$"];
 
     // Union of all dietary restrictions across the group
@@ -618,7 +599,6 @@ export async function POST(req: NextRequest) {
           location.lng,
           radiusMeters,
           priceLevels,
-          slots[cuisineId] || 1
         );
         // Apply quality floor and open-hours filter
         categoryResults[cuisineId] = raw.filter(
@@ -658,7 +638,6 @@ export async function POST(req: NextRequest) {
             location.lng,
             radiusMeters,
             priceLevels,
-            EXPANSION_TRIGGER
           );
           const filtered = raw.filter(
             (p) => passesQualityFloor(p) && isCurrentlyOpen(p)
