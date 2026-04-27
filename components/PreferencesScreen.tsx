@@ -42,12 +42,6 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
   const preferencesDone = session.responses?.preferencesDone || {};
   const creatorName = session.participants[session.creatorId]?.name ?? "the host";
 
-  // Collect all vetoed cuisines — greyed out and unselectable
-  const vetoResponses = session.responses?.veto || {};
-  const allVetoed = new Set<string>(
-    Object.values(vetoResponses).flatMap((v) => (Array.isArray(v) ? v : []))
-  );
-
   // Local state for instant tap feedback — Firebase data used for count badges
   const [localSelections, setLocalSelections] = useState<string[]>(() =>
     Array.isArray(prefResponses[participantId]) ? prefResponses[participantId] : []
@@ -64,7 +58,7 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
   }
 
   function toggleCuisine(id: string) {
-    if (iAmDone || isReveal || allVetoed.has(id)) return;
+    if (iAmDone || isReveal) return;
 
     const isSelected = localSelections.includes(id);
 
@@ -108,7 +102,7 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
   }
 
   async function handleAdvance() {
-    await set(ref(db, `sessions/${sessionId}/phase`), "dietary");
+    await set(ref(db, `sessions/${sessionId}/phase`), "veto");
   }
 
   // ── Reveal data helpers ──────────────────────────────────────────────────
@@ -193,7 +187,6 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
             {/* Cuisine grid — accumulation visible */}
             <div className="grid grid-cols-3 gap-2">
               {CUISINES.map((cuisine) => {
-                const vetoed = allVetoed.has(cuisine.id);
                 const iMine = localSelections.includes(cuisine.id);
                 const othersCount = othersPickCountFor(cuisine.id);
                 const atMax = !iMine && localSelections.length >= 3;
@@ -202,19 +195,17 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
                   <button
                     key={cuisine.id}
                     onClick={() => toggleCuisine(cuisine.id)}
-                    disabled={vetoed || atMax || iAmDone}
+                    disabled={atMax || iAmDone}
                     className={[
                       "py-3 px-2 rounded-xl text-sm font-medium transition-colors touch-manipulation",
-                      vetoed
-                        ? "bg-gray-900 text-gray-700 line-through cursor-not-allowed"
-                        : iMine
-                        ? "bg-white text-gray-950 cursor-pointer"                                                              // my pick
+                      iMine
+                        ? "bg-white text-gray-950 cursor-pointer"
                         : atMax && othersCount > 0
-                        ? "bg-green-500/10 text-green-300/70 border border-green-500/20 cursor-default opacity-60"             // cap + others picked — green dimmed
+                        ? "bg-green-500/10 text-green-300/70 border border-green-500/20 cursor-default opacity-60"
                         : atMax
-                        ? "bg-gray-800 text-gray-600 cursor-default opacity-40"                                               // cap — nobody picked, dimmed
+                        ? "bg-gray-800 text-gray-600 cursor-default opacity-40"
                         : othersCount > 0
-                        ? "bg-green-500/10 text-green-300/70 border border-green-500/20 cursor-pointer"                       // others picked it
+                        ? "bg-green-500/10 text-green-300/70 border border-green-500/20 cursor-pointer"
                         : iAmDone
                         ? "bg-gray-800 text-gray-600 cursor-default"
                         : "bg-gray-800 text-gray-300 hover:bg-gray-700 cursor-pointer",

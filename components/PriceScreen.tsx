@@ -64,7 +64,7 @@ export default function PriceScreen({ sessionId, session, participantId }: Props
   }
 
   async function handleContinue() {
-    await set(ref(db, `sessions/${sessionId}/phase`), "veto");
+    await set(ref(db, `sessions/${sessionId}/phase`), "preferences");
   }
 
   // V2 tiebreaker: lower-bound wins — cheapest tier anyone chose
