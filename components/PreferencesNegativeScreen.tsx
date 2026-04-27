@@ -141,7 +141,7 @@ export default function PreferencesNegativeScreen({ sessionId, session, particip
                 {isMyPositivePick && <span className="mr-1">✓</span>}
                 {!isMyPositivePick && (iMine || othersCount > 0) && <span className="mr-1">✕</span>}
                 {cuisine.label}
-                {othersCount > 1 && (
+                {othersCount > 0 && (
                   <span className="ml-1 text-xs font-normal opacity-60">({othersCount})</span>
                 )}
               </button>
