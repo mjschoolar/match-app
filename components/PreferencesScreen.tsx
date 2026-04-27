@@ -202,7 +202,7 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
                         : "bg-gray-800 text-gray-300 hover:bg-gray-700 cursor-pointer",
                     ].join(" ")}
                   >
-                    {othersCount > 0 && !iMine && <span className="mr-1">✓</span>}
+                    {(iMine || othersCount > 0) && <span className="mr-1">✓</span>}
                     {cuisine.label}
                     {othersCount > 1 && (
                       <span className="ml-1 text-xs font-normal opacity-60">
