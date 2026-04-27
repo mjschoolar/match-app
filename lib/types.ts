@@ -26,7 +26,7 @@ export interface Session {
     dineIn?: Record<string, string>;
     distance?: Record<string, number>;
     price?: Record<string, string>;
-    veto?: Record<string, string[]>;
+    veto?: Record<string, string>; // cuisine ID string, or "pass" if participant passed
     // vetoDone tracks who has tapped "Done" on the veto screen.
     // Needed because Firebase can't store empty arrays — without this,
     // "no vetoes selected" and "hasn't voted yet" would look identical.

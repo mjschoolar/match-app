@@ -28,8 +28,7 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
   const prefNegativeResponses = session.responses?.preferencesNegative || {};
 
   async function handleContinue() {
-    // V4 temporary: goes directly to generating-stack. Veto step returns in V4.1.
-    await set(ref(db, `sessions/${sessionId}/phase`), "generating-stack");
+    await set(ref(db, `sessions/${sessionId}/phase`), "veto");
   }
 
   function cuisineLabel(id: string) {

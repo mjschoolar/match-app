@@ -1,20 +1,23 @@
 "use client";
-// VetoScreen — Pre-swipe step 4 of 6.
+// VetoScreen — V4.1 veto mechanic.
 //
-// V2 changes:
-//   - During voting: tiles show a count badge (how many picked it) but no names.
-//     Attribution appears only at the reveal.
-//   - Removed the live named-attribution list. Replaced with a simple
-//     "N of X done" completion indicator.
-//   - Reveal is unchanged — full attribution still shown there.
+// Signal-free individual decision window. No counts, no semi-selected
+// states, no social information visible during the decision. Each
+// participant gets exactly 1 veto or can pass entirely.
 //
-// Why vetoDone exists: Firebase can't store an empty array (it treats it as
-// null and removes the node). Without a separate "done" flag we can't tell
-// the difference between "chose no vetoes" and "hasn't responded yet".
+// Two-tap confirm flow: tap a tile to stage it, tap the CTA to confirm.
+// Tapping the staged tile again deselects it. "Nothing — I'm in" passes.
+//
+// Firebase writes "pass" instead of null (Firebase drops null nodes).
+// Creator sees Continue only after all participants have responded.
+// Creator also participates — Continue appears only after their own response.
+//
+// The vetoable grid is filtered: categories excluded if majority of
+// participants marked them negative in the preferences-negative pass.
 
 import { useState } from "react";
 import { db } from "@/lib/firebase";
-import { ref, set, get, remove } from "firebase/database";
+import { ref, set } from "firebase/database";
 import { Session } from "@/lib/types";
 import { CUISINES } from "@/lib/constants";
 
@@ -28,219 +31,218 @@ export default function VetoScreen({ sessionId, session, participantId }: Props)
   const isReveal = session.phase === "veto-reveal";
   const isCreator = session.creatorId === participantId;
   const participants = Object.entries(session.participants || {});
-  const totalParticipants = participants.length;
+  const participantCount = participants.length;
   const vetoResponses = session.responses?.veto || {};
-  const vetoDone = session.responses?.vetoDone || {};
-  const iAmDone = !!vetoDone[participantId];
+  const prefNegativeResponses = session.responses?.preferencesNegative || {};
   const creatorName = session.participants[session.creatorId]?.name ?? "the host";
 
-  const totalDone = Object.values(vetoDone).filter(Boolean).length;
+  const myResponse = vetoResponses[participantId]; // cuisine ID, "pass", or undefined
+  const [pendingVeto, setPendingVeto] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState(false);
 
-  // Local state keeps the grid snappy — taps feel instant while Firebase syncs
-  const [selections, setSelections] = useState<string[]>(
-    Array.isArray(vetoResponses[participantId]) ? vetoResponses[participantId] : []
-  );
+  const iAmDone = submitted || myResponse !== undefined;
 
-  // How many participants have vetoed a given cuisine (for count badges)
-  function vetoCountFor(cuisineId: string): number {
-    return Object.values(vetoResponses).filter(
-      (v) => Array.isArray(v) && v.includes(cuisineId)
+  // All participants (including creator) have responded
+  const allIds = Object.keys(session.participants || {});
+  const allResponded = allIds.every((id) => vetoResponses[id] !== undefined);
+
+  // Filtered grid: exclude categories that a majority already marked negative
+  const threshold = Math.ceil(participantCount / 2);
+  const vetoableCuisines = CUISINES.filter((cuisine) => {
+    const negativeCount = Object.values(prefNegativeResponses).filter(
+      (picks) => Array.isArray(picks) && (picks as string[]).includes(cuisine.id)
     ).length;
+    return negativeCount < threshold;
+  });
+
+  function handleTileTap(cuisineId: string) {
+    if (iAmDone) return;
+    setPendingVeto((prev) => (prev === cuisineId ? null : cuisineId));
   }
 
-  const VETO_CAP = 3;
-
-  function toggleCuisine(cuisineId: string) {
-    if (iAmDone || isReveal) return;
-    // At cap: only allow de-selecting, not adding more
-    if (!selections.includes(cuisineId) && selections.length >= VETO_CAP) return;
-
-    const next = selections.includes(cuisineId)
-      ? selections.filter((s) => s !== cuisineId)
-      : [...selections, cuisineId];
-
-    setSelections(next);
-
-    // Write live to Firebase so others see count updates immediately.
-    // If empty, remove the node — Firebase can't store [].
-    const vetoRef = ref(db, `sessions/${sessionId}/responses/veto/${participantId}`);
-    if (next.length > 0) {
-      set(vetoRef, next);
-    } else {
-      remove(vetoRef);
-    }
-  }
-
-  async function handleDone() {
+  async function handleConfirmVeto() {
+    if (!pendingVeto || iAmDone) return;
+    setSubmitted(true);
     await set(
-      ref(db, `sessions/${sessionId}/responses/vetoDone/${participantId}`),
-      true
+      ref(db, `sessions/${sessionId}/responses/veto/${participantId}`),
+      pendingVeto
     );
-
-    // Fresh read to avoid race condition
-    const allIds = Object.keys(session.participants || {});
-    const snap = await get(ref(db, `sessions/${sessionId}/responses/vetoDone`));
-    const current = snap.val() || {};
-    const allDone = allIds.every((id) => current[id] === true);
-
-    if (allDone) {
-      await set(ref(db, `sessions/${sessionId}/phase`), "veto-reveal");
-    }
   }
 
-  async function handleContinue() {
-    await set(ref(db, `sessions/${sessionId}/phase`), "dietary");
+  async function handlePass() {
+    if (iAmDone) return;
+    setSubmitted(true);
+    await set(
+      ref(db, `sessions/${sessionId}/responses/veto/${participantId}`),
+      "pass"
+    );
   }
 
-  // For the reveal: build a map of cuisineId → [names who vetoed it]
-  function getRevealByCuisine(): Record<string, string[]> {
-    const byCuisine: Record<string, string[]> = {};
-    for (const [pid, vetoes] of Object.entries(vetoResponses)) {
-      if (!Array.isArray(vetoes)) continue;
-      for (const cuisineId of vetoes) {
-        if (!byCuisine[cuisineId]) byCuisine[cuisineId] = [];
-        const name = session.participants[pid]?.name ?? pid;
-        byCuisine[cuisineId].push(name);
-      }
-    }
-    return byCuisine;
+  async function handleAdvanceToReveal() {
+    await set(ref(db, `sessions/${sessionId}/phase`), "veto-reveal");
   }
 
-  function cuisineLabel(id: string): string {
+  async function handleAdvanceToStack() {
+    await set(ref(db, `sessions/${sessionId}/phase`), "generating-stack");
+  }
+
+  function cuisineLabel(id: string) {
     return CUISINES.find((c) => c.id === id)?.label ?? id;
   }
 
-  const revealByCuisine = isReveal ? getRevealByCuisine() : {};
-  const vetoedCuisines = Object.keys(revealByCuisine);
+  // The cuisine this participant actually vetoed (post-confirm, from Firebase or local)
+  const myVeto = myResponse && myResponse !== "pass" ? myResponse : null;
+
+  // ── REVEAL data ──
+  const actualVetoes = Object.entries(vetoResponses).filter(([, v]) => v !== "pass");
+  const hasVetoes = actualVetoes.length > 0;
 
   return (
     <main className="min-h-dvh flex flex-col items-center justify-center p-8 bg-gray-950 text-white">
       <div className="max-w-sm w-full space-y-6">
 
-        <div>
-          <h2 className="text-2xl font-semibold text-center leading-snug">
-            {isReveal ? "Off the table tonight" : "Anything off the table tonight?"}
-          </h2>
-          {!isReveal && (
-            <p className="text-gray-400 text-sm text-center mt-1">
-              Tap anything you don&apos;t want tonight.
-            </p>
-          )}
-        </div>
-
-        {/* ── VOTING STATE ── */}
+        {/* ── VETO WINDOW ── */}
         {!isReveal && (
           <>
-            {/* Cap indicator */}
-            <p className="text-center text-sm text-gray-400">
-              {selections.length === VETO_CAP
-                ? `${VETO_CAP}/${VETO_CAP} vetoes used`
-                : `${selections.length}/${VETO_CAP} vetoes used`}
-            </p>
+            {!iAmDone && (
+              <div>
+                <h2 className="text-2xl font-semibold text-center leading-snug">
+                  Anything you want to take off the table?
+                </h2>
+                <p className="text-gray-400 text-sm text-center mt-1">
+                  You have 1 veto.
+                </p>
+              </div>
+            )}
 
-            {/* Cuisine grid — tiles show count badges, not names */}
+            {iAmDone && (
+              <div className="text-center space-y-1">
+                <h2 className="text-2xl font-semibold">
+                  {myVeto ? `${cuisineLabel(myVeto)} is off the table.` : "You're in."}
+                </h2>
+                <p className="text-gray-400 text-sm">Waiting for the group.</p>
+              </div>
+            )}
+
+            {/* Signal-free grid — all tiles look the same until tapped */}
             <div className="grid grid-cols-3 gap-2">
-              {CUISINES.map((cuisine) => {
-                const selected = selections.includes(cuisine.id);
-                const count = vetoCountFor(cuisine.id);
-                const atCap = selections.length >= VETO_CAP;
-                const blockedByCap = atCap && !selected;
+              {vetoableCuisines.map((cuisine) => {
+                const isPending = pendingVeto === cuisine.id;
+                const isMyVeto = myVeto === cuisine.id;
 
                 return (
                   <button
                     key={cuisine.id}
-                    onClick={() => toggleCuisine(cuisine.id)}
-                    disabled={iAmDone || blockedByCap}
+                    onClick={() => handleTileTap(cuisine.id)}
+                    disabled={iAmDone}
                     className={[
-                      "py-3 px-2 rounded-xl text-sm font-medium touch-manipulation transition-colors",
-                      selected
-                        ? "bg-red-500/20 text-red-300 border border-red-500/40 cursor-pointer"            // I vetoed it
-                        : blockedByCap && count > 0
-                        ? "bg-red-500/10 text-red-300/70 border border-red-500/20 cursor-default opacity-60" // cap + others vetoed — keep red, muted
-                        : blockedByCap
-                        ? "bg-gray-800 text-gray-600 cursor-default opacity-40"                            // cap — nobody vetoed, dimmed
-                        : count > 0
-                        ? "bg-red-500/10 text-red-300/70 border border-red-500/20 cursor-pointer"         // others vetoed it
-                        : "bg-gray-800 text-gray-300 hover:bg-gray-700 cursor-pointer",                   // nobody yet
-                      iAmDone ? "cursor-default" : "",
+                      "py-3 px-2 rounded-xl text-sm font-medium transition-colors touch-manipulation",
+                      isMyVeto
+                        ? "bg-red-500/20 text-red-300 border border-red-500/40 cursor-default"
+                        : isPending
+                        ? "bg-white text-gray-950 cursor-pointer"
+                        : iAmDone
+                        ? "bg-gray-800 text-gray-600 cursor-default"
+                        : "bg-gray-800 text-gray-300 hover:bg-gray-700 cursor-pointer",
                     ].join(" ")}
                   >
-                    {(selected || count > 0) && <span className="mr-1">✕</span>}
+                    {isMyVeto && <span className="mr-1">✕</span>}
                     {cuisine.label}
-                    {/* Count badge — shows when multiple people have vetoed */}
-                    {count > 1 && (
-                      <span className="ml-1 text-xs font-normal opacity-60">
-                        ({count})
-                      </span>
-                    )}
                   </button>
                 );
               })}
             </div>
 
-            {/* Completion progress — no attribution, just a count */}
-            <p className="text-center text-sm text-gray-400">
-              {iAmDone
-                ? `Done ✓  ·  ${totalDone} of ${totalParticipants} finished`
-                : `${totalDone} of ${totalParticipants} finished`}
-            </p>
-
-            {/* Done button — hidden after submitting */}
+            {/* CTA — changes based on pending selection */}
             {!iAmDone && (
               <button
-                onClick={handleDone}
+                onClick={pendingVeto ? handleConfirmVeto : handlePass}
                 className="w-full py-4 bg-white text-gray-950 rounded-2xl font-semibold text-lg cursor-pointer touch-manipulation"
               >
-                {selections.length > 0
-                  ? `Veto ${selections.length} cuisine${selections.length > 1 ? "s" : ""}`
-                  : "Nothing to veto — I'm good"}
+                {pendingVeto
+                  ? `${cuisineLabel(pendingVeto)} is off the table`
+                  : "Nothing — I'm in"}
+              </button>
+            )}
+
+            {/* Completion list */}
+            <div className="space-y-2">
+              {participants.map(([id, participant]) => {
+                const done = vetoResponses[id] !== undefined || (id === participantId && submitted);
+                return (
+                  <div
+                    key={id}
+                    className="flex items-center justify-between bg-gray-800 rounded-xl px-4 py-3"
+                  >
+                    <span className="font-medium">
+                      {participant.name}
+                      {id === participantId && (
+                        <span className="text-gray-500 font-normal"> (you)</span>
+                      )}
+                    </span>
+                    <span className={done ? "text-green-400" : "text-gray-500"}>
+                      {done ? "✓" : "..."}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Creator Continue — only after everyone (including creator) has responded */}
+            {isCreator && allResponded && (
+              <button
+                onClick={handleAdvanceToReveal}
+                className="w-full py-4 bg-white text-gray-950 rounded-2xl font-semibold text-lg cursor-pointer touch-manipulation"
+              >
+                See what&apos;s off the table
               </button>
             )}
           </>
         )}
 
-        {/* ── REVEAL STATE — full attribution ── */}
+        {/* ── REVEAL ── */}
         {isReveal && (
           <>
-            {vetoedCuisines.length === 0 ? (
-              <p className="text-center text-gray-300">
-                Nothing vetoed — everything&apos;s fair game tonight.
-              </p>
+            {!hasVetoes ? (
+              <>
+                <div className="text-center space-y-2">
+                  <h2 className="text-2xl font-semibold">Nobody took anything off the table.</h2>
+                  <p className="text-gray-400 text-sm">Everything&apos;s in play.</p>
+                </div>
+              </>
             ) : (
-              <div className="space-y-3">
-                {vetoedCuisines.map((cuisineId) => {
-                  const names = revealByCuisine[cuisineId];
-                  return (
-                    <div
-                      key={cuisineId}
-                      className="flex items-center justify-between bg-gray-800 rounded-xl px-4 py-3"
-                    >
-                      <span className="font-medium text-red-300">
-                        ✕ {cuisineLabel(cuisineId)}
-                      </span>
-                      <span className="text-gray-400 text-sm">{names.join(", ")}</span>
-                    </div>
-                  );
-                })}
-              </div>
+              <>
+                <h2 className="text-2xl font-semibold text-center">Off the table</h2>
+                <div className="space-y-2">
+                  {actualVetoes.map(([pid, cuisineId]) => {
+                    const name = session.participants[pid]?.name ?? pid;
+                    return (
+                      <div
+                        key={pid}
+                        className="flex items-center justify-between bg-gray-800 rounded-xl px-4 py-3"
+                      >
+                        <span className="font-medium text-red-300">
+                          ✕ {cuisineLabel(cuisineId)}
+                        </span>
+                        <span className="text-gray-400 text-sm">{name}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-center text-gray-400 text-sm">
+                  Everything else is in play.
+                </p>
+              </>
             )}
 
-            <p className="text-center text-gray-400 text-sm">
-              {vetoedCuisines.length > 0
-                ? "Everything else is fair game."
-                : "The full menu is open."}
-            </p>
-
-            {isCreator && (
+            {isCreator ? (
               <button
-                onClick={handleContinue}
+                onClick={handleAdvanceToStack}
                 className="w-full py-4 bg-white text-gray-950 rounded-2xl font-semibold text-lg cursor-pointer touch-manipulation"
               >
-                Continue
+                Build the stack
               </button>
-            )}
-
-            {!isCreator && (
+            ) : (
               <p className="text-center text-gray-400 text-sm">
                 Waiting for {creatorName} to continue...
               </p>
