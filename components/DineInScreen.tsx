@@ -70,7 +70,7 @@ export default function DineInScreen({ sessionId, session, participantId }: Prop
   }
 
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center p-8 bg-gray-950 text-white">
+    <main className="min-h-dvh flex flex-col items-center justify-center p-8 bg-gray-950 text-white">
       <div className="max-w-sm w-full space-y-6">
 
         <h2 className="text-2xl font-semibold text-center leading-snug">

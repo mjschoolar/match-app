@@ -38,7 +38,7 @@ export default function AnticipationScreen({ sessionId, isCreator }: Props) {
   }, [sessionId, isCreator]);
 
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center p-8 bg-gray-950 text-white">
+    <main className="min-h-dvh flex flex-col items-center justify-center p-8 bg-gray-950 text-white">
       <div className="max-w-sm w-full text-center space-y-3">
         <p className="text-4xl">🍽️</p>
         <h2 className="text-2xl font-semibold">Everyone&apos;s in.</h2>

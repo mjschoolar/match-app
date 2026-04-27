@@ -123,7 +123,7 @@ export default function SummaryScreen({ session }: Props) {
   }
 
   return (
-    <main className="min-h-screen flex flex-col items-start p-8 bg-gray-950 text-white pt-16">
+    <main className="min-h-dvh flex flex-col items-start p-8 bg-gray-950 text-white pt-16">
       <div className="max-w-sm w-full space-y-6">
 
         <h1 className="text-3xl font-bold">Here&apos;s where you landed.</h1>

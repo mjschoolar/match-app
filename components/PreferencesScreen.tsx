@@ -62,9 +62,6 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
 
     const isSelected = localSelections.includes(id);
 
-    // Enforce 3-pick cap
-    if (!isSelected && localSelections.length >= 3) return;
-
     const next = isSelected
       ? localSelections.filter((s) => s !== id)
       : [...localSelections, id];
@@ -157,7 +154,7 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
     : { shared: [], solo: [], openToAnything: [] };
 
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center p-8 bg-gray-950 text-white">
+    <main className="min-h-dvh flex flex-col items-center justify-center p-8 bg-gray-950 text-white">
       <div className="max-w-sm w-full space-y-6">
 
         {/* ── SELECTION + WAITING STATE ── */}
@@ -170,17 +167,16 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
               <p className="text-gray-400 text-sm text-center mt-1">
                 {iAmDone
                   ? "Locked in ✓"
-                  : "Pick up to 3. Only you can see which are yours."}
+                  : "Only you can see which are yours."}
               </p>
             </div>
 
             {/* Selection counter */}
             {!iAmDone && (
               <p className="text-center text-sm text-gray-400">
-                {localSelections.length === 0 && "Nothing selected yet"}
-                {localSelections.length === 1 && "1 of 3 picked"}
-                {localSelections.length === 2 && "2 of 3 picked"}
-                {localSelections.length === 3 && "3 of 3 — locked and loaded"}
+                {localSelections.length === 0
+                  ? "Nothing selected yet"
+                  : `${localSelections.length} selected`}
               </p>
             )}
 
@@ -189,21 +185,16 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
               {CUISINES.map((cuisine) => {
                 const iMine = localSelections.includes(cuisine.id);
                 const othersCount = othersPickCountFor(cuisine.id);
-                const atMax = !iMine && localSelections.length >= 3;
 
                 return (
                   <button
                     key={cuisine.id}
                     onClick={() => toggleCuisine(cuisine.id)}
-                    disabled={atMax || iAmDone}
+                    disabled={iAmDone}
                     className={[
                       "py-3 px-2 rounded-xl text-sm font-medium transition-colors touch-manipulation",
                       iMine
-                        ? "bg-white text-gray-950 cursor-pointer"
-                        : atMax && othersCount > 0
-                        ? "bg-green-500/10 text-green-300/70 border border-green-500/20 cursor-default opacity-60"
-                        : atMax
-                        ? "bg-gray-800 text-gray-600 cursor-default opacity-40"
+                        ? "bg-green-500/20 text-green-300 border border-green-500/40 cursor-pointer"
                         : othersCount > 0
                         ? "bg-green-500/10 text-green-300/70 border border-green-500/20 cursor-pointer"
                         : iAmDone
@@ -211,7 +202,7 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
                         : "bg-gray-800 text-gray-300 hover:bg-gray-700 cursor-pointer",
                     ].join(" ")}
                   >
-                    {othersCount > 0 && <span className="mr-1">✓</span>}
+                    {othersCount > 0 && !iMine && <span className="mr-1">✓</span>}
                     {cuisine.label}
                     {othersCount > 1 && (
                       <span className="ml-1 text-xs font-normal opacity-60">

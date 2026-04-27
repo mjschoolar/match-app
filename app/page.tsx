@@ -91,7 +91,7 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center p-8 bg-gray-950 text-white">
+    <main className="min-h-dvh flex flex-col items-center justify-center p-8 bg-gray-950 text-white">
       <div className="max-w-sm w-full space-y-8">
 
         <h1 className="text-4xl font-bold text-center tracking-tight">Match</h1>

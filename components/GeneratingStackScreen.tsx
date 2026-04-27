@@ -36,7 +36,7 @@ export default function GeneratingStackScreen({ sessionId, isCreator }: Props) {
   }, [isCreator, sessionId]);
 
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center p-8 bg-gray-950 text-white">
+    <main className="min-h-dvh flex flex-col items-center justify-center p-8 bg-gray-950 text-white">
       <div className="max-w-sm w-full text-center space-y-3">
         <p className="text-2xl font-semibold">Generating your stack</p>
         <p className="text-gray-500 text-sm">Pulling together everything you told us</p>
