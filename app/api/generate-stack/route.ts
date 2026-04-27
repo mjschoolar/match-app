@@ -464,16 +464,24 @@ function transformPlace(
 
 export async function POST(req: NextRequest) {
   const key = process.env.GOOGLE_PLACES_API_KEY;
-  if (!key) {
-    return NextResponse.json({ error: "API key not configured" }, { status: 500 });
-  }
 
-  const { sessionId } = await req.json() as { sessionId: string };
+  // Read sessionId first so we can write an error to Firebase even if the key is missing
+  const body = await req.json() as { sessionId?: string };
+  const sessionId = body.sessionId;
   if (!sessionId) {
     return NextResponse.json({ error: "sessionId required" }, { status: 400 });
   }
 
   const sessionRef = ref(db, `sessions/${sessionId}`);
+
+  if (!key) {
+    // Write api-failure so GeneratingStackScreen surfaces the error state instead of hanging
+    await set(ref(db, `sessions/${sessionId}/stack`), {
+      generated: false,
+      error: "api-failure",
+    });
+    return NextResponse.json({ error: "API key not configured" }, { status: 500 });
+  }
 
   try {
     // ── Read session from Firebase ──────────────────────────────────────────

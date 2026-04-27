@@ -15,7 +15,7 @@
 // The vetoable grid is filtered: categories excluded if majority of
 // participants marked them negative in the preferences-negative pass.
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { db } from "@/lib/firebase";
 import { ref, set } from "firebase/database";
 import { Session } from "@/lib/types";
@@ -45,6 +45,17 @@ export default function VetoScreen({ sessionId, session, participantId }: Props)
   // All participants (including creator) have responded
   const allIds = Object.keys(session.participants || {});
   const allResponded = allIds.every((id) => vetoResponses[id] !== undefined);
+
+  // Auto-advance to veto-reveal when everyone has locked in — no host button needed.
+  // Only the creator writes the phase change; 500ms delay acts as a small breath.
+  useEffect(() => {
+    if (!allResponded || isReveal || !isCreator) return;
+    const timer = setTimeout(() => {
+      handleAdvanceToReveal();
+    }, 500);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allResponded, isReveal, isCreator]);
 
   // Filtered grid: exclude categories that a majority already marked negative
   const threshold = Math.ceil(participantCount / 2);
@@ -188,15 +199,7 @@ export default function VetoScreen({ sessionId, session, participantId }: Props)
               })}
             </div>
 
-            {/* Creator Continue — only after everyone (including creator) has responded */}
-            {isCreator && allResponded && (
-              <button
-                onClick={handleAdvanceToReveal}
-                className="w-full py-4 bg-white text-gray-950 rounded-2xl font-semibold text-lg cursor-pointer touch-manipulation"
-              >
-                See what&apos;s off the table
-              </button>
-            )}
+            {/* Auto-advances when everyone locks in — no manual button needed */}
           </>
         )}
 

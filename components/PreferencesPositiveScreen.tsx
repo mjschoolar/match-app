@@ -105,6 +105,8 @@ export default function PreferencesPositiveScreen({ sessionId, session, particip
           {CUISINES.map((cuisine) => {
             const iMine = localSelections.includes(cuisine.id);
             const othersCount = othersPickCountFor(cuisine.id);
+            // Total visible count: others + self (when I've also picked it)
+            const totalCount = othersCount + (iMine ? 1 : 0);
             const atMax = !iMine && localSelections.length >= PREF_CAP;
 
             return (
@@ -113,7 +115,7 @@ export default function PreferencesPositiveScreen({ sessionId, session, particip
                 onClick={() => toggleCuisine(cuisine.id)}
                 disabled={atMax || iAmDone}
                 className={[
-                  "py-3 px-2 rounded-xl text-sm font-medium transition-colors touch-manipulation",
+                  "py-2.5 px-2 rounded-xl text-sm font-medium transition-colors touch-manipulation flex flex-col items-center gap-0.5 min-h-[52px] justify-center",
                   iMine
                     ? "bg-green-500/20 text-green-300 border border-green-500/40 cursor-pointer"
                     : atMax && othersCount > 0
@@ -127,10 +129,12 @@ export default function PreferencesPositiveScreen({ sessionId, session, particip
                     : "bg-gray-800 text-gray-300 hover:bg-gray-700 cursor-pointer",
                 ].join(" ")}
               >
-                {(iMine || othersCount > 0) && <span className="mr-1">✓</span>}
-                {cuisine.label}
-                {othersCount > 0 && (
-                  <span className="ml-1 text-xs font-normal opacity-60">({othersCount})</span>
+                <span className="leading-snug text-center">
+                  {(iMine || othersCount > 0) && <span className="mr-0.5">✓</span>}
+                  {cuisine.label}
+                </span>
+                {totalCount > 0 && (
+                  <span className="text-xs font-normal opacity-60">({totalCount})</span>
                 )}
               </button>
             );

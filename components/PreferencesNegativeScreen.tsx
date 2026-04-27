@@ -114,6 +114,8 @@ export default function PreferencesNegativeScreen({ sessionId, session, particip
             const isMyPositivePick = myPositivePicks.has(cuisine.id);
             const iMine = localSelections.includes(cuisine.id);
             const othersCount = othersMarkCountFor(cuisine.id);
+            // Total visible count: others + self (when I've also marked it)
+            const totalCount = othersCount + (iMine ? 1 : 0);
             const atMax = !iMine && localSelections.length >= PREF_CAP;
 
             return (
@@ -122,7 +124,7 @@ export default function PreferencesNegativeScreen({ sessionId, session, particip
                 onClick={() => toggleCuisine(cuisine.id)}
                 disabled={isMyPositivePick || atMax || iAmDone}
                 className={[
-                  "py-3 px-2 rounded-xl text-sm font-medium transition-colors touch-manipulation",
+                  "py-2.5 px-2 rounded-xl text-sm font-medium transition-colors touch-manipulation flex flex-col items-center gap-0.5 min-h-[52px] justify-center",
                   isMyPositivePick
                     ? "bg-green-500/20 text-green-300 border border-green-500/40 cursor-default"
                     : iMine
@@ -138,11 +140,13 @@ export default function PreferencesNegativeScreen({ sessionId, session, particip
                     : "bg-gray-800 text-gray-300 hover:bg-gray-700 cursor-pointer",
                 ].join(" ")}
               >
-                {isMyPositivePick && <span className="mr-1">✓</span>}
-                {!isMyPositivePick && (iMine || othersCount > 0) && <span className="mr-1">✕</span>}
-                {cuisine.label}
-                {othersCount > 0 && (
-                  <span className="ml-1 text-xs font-normal opacity-60">({othersCount})</span>
+                <span className="leading-snug text-center">
+                  {isMyPositivePick && <span className="mr-0.5">✓</span>}
+                  {!isMyPositivePick && (iMine || othersCount > 0) && <span className="mr-0.5">✕</span>}
+                  {cuisine.label}
+                </span>
+                {totalCount > 0 && !isMyPositivePick && (
+                  <span className="text-xs font-normal opacity-60">({totalCount})</span>
                 )}
               </button>
             );

@@ -39,6 +39,7 @@ export default function GeneratingStackScreen({ sessionId, session, isCreator }:
   const [imagesPreloaded, setImagesPreloaded] = useState(false);
   const [minTimeElapsed, setMinTimeElapsed] = useState(false);
   const [hasAdvanced, setHasAdvanced] = useState(false);
+  const [timedOut, setTimedOut] = useState(false);
 
   const stackGenerated = session.stack?.generated === true;
   const stackError = session.stack?.error;
@@ -63,6 +64,14 @@ export default function GeneratingStackScreen({ sessionId, session, isCreator }:
     const timer = setTimeout(() => setMinTimeElapsed(true), 3000);
     return () => clearTimeout(timer);
   }, []);
+
+  // ── 2b. Client-side timeout — if stack never generates, surface an error ──
+  // Covers the case where the API call fails without writing stack/error to Firebase
+  useEffect(() => {
+    if (stackGenerated || stackError) return;
+    const timeout = setTimeout(() => setTimedOut(true), 45000);
+    return () => clearTimeout(timeout);
+  }, [stackGenerated, stackError]);
 
   // ── 3. Preload photos when stack is ready (all devices) ──────────────────
   useEffect(() => {
@@ -118,6 +127,20 @@ export default function GeneratingStackScreen({ sessionId, session, isCreator }:
             We couldn&apos;t find enough restaurants that matched. Try expanding your distance
             or choosing a different price range.
           </p>
+        </div>
+      </main>
+    );
+  }
+
+  if (timedOut && !stackGenerated) {
+    return (
+      <main className="min-h-dvh flex flex-col items-center justify-center p-8 bg-gray-950 text-white">
+        <div className="max-w-sm w-full text-center space-y-4">
+          <p className="text-2xl font-semibold">Something went wrong.</p>
+          <p className="text-gray-400 text-sm">
+            We couldn&apos;t pull the restaurant data. Check your connection and try again.
+          </p>
+          <p className="text-gray-600 text-xs font-mono">{sessionId}</p>
         </div>
       </main>
     );

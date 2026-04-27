@@ -32,7 +32,8 @@ export async function POST(req: NextRequest) {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": key,
         // Minimal field mask — we only need to count results
-        "X-Goog-FieldMask": "places.id,nextPageToken",
+        // nextPageToken is a response-level field — it must NOT appear in the FieldMask
+        "X-Goog-FieldMask": "places.id",
       },
       body: JSON.stringify({
         locationRestriction: {
