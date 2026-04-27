@@ -79,48 +79,71 @@ export default function SessionPage() {
 
     swipeAdvancedRef.current = true;
 
-    // Normalise Firebase arrays-stored-as-objects → real arrays
-    function toArr<T>(val: unknown): T[] {
-      if (!val) return [];
-      if (Array.isArray(val)) return val as T[];
-      return Object.values(val as Record<string, T>);
-    }
+    try {
+      // Normalise Firebase arrays-stored-as-objects → real arrays, drop any
+      // null/undefined elements that could appear if Firebase compressed the data.
+      function toArr<T>(val: unknown): T[] {
+        if (!val) return [];
+        if (Array.isArray(val)) return (val as T[]).filter((v) => v != null);
+        return (Object.values(val as Record<string, T>)).filter((v) => v != null);
+      }
 
-    const restaurants = toArr<StackRestaurant>(session.stack?.restaurants);
-    const participants = session.participants || {};
-    const swipeDecisions = (session.swipeDecisions || {}) as Record<string, Record<string, string>>;
-    const total = allIds.length;
+      const restaurants = toArr<StackRestaurant>(session.stack?.restaurants);
+      const participants = session.participants || {};
+      const swipeDecisions = (session.swipeDecisions || {}) as Record<string, Record<string, string>>;
+      const total = allIds.length;
 
-    const complete: RestaurantResult[] = [];
-    const majority: RestaurantResult[] = [];
-    const partial: RestaurantResult[] = [];
+      const complete: RestaurantResult[] = [];
+      const majority: RestaurantResult[] = [];
+      const partial: RestaurantResult[] = [];
 
-    for (const r of restaurants) {
-      const matchedIds = allIds.filter((pid) => swipeDecisions[pid]?.[r.id] === "right");
-      const matchedBy = matchedIds.map((pid) => participants[pid]?.name ?? pid);
-      const entry: RestaurantResult = {
-        id: r.id,
-        name: r.name,
-        cuisine: r.matchCategory,
-        rating: r.rating,
-        reviewCount: r.reviewCount,
-        priceLevel: r.priceLevel,
-        distance: `${r.distanceMiles} mi`,
-        photoUrl: r.photoUrl,
-        address: r.address,
-        phone: r.phone,
-        websiteUrl: r.websiteUrl,
-        location: r.location,
-        matchedBy,
+      for (const r of restaurants) {
+        // Skip any malformed restaurant entries
+        if (!r || !r.id) continue;
+
+        const matchedIds = allIds.filter((pid) => swipeDecisions[pid]?.[r.id] === "right");
+        const matchedBy = matchedIds.map((pid) => participants[pid]?.name ?? pid);
+
+        // Use ?? null for every nullable field — Firebase throws if it receives
+        // undefined (null fields written to Firebase are dropped on write and
+        // come back as undefined on read, so we must re-null them before re-writing).
+        const entry: RestaurantResult = {
+          id: r.id,
+          name: r.name ?? "",
+          cuisine: r.matchCategory ?? "",
+          rating: r.rating ?? 0,
+          reviewCount: r.reviewCount ?? 0,
+          priceLevel: r.priceLevel ?? null,
+          distance: `${r.distanceMiles ?? 0} mi`,
+          photoUrl: r.photoUrl ?? null,
+          address: r.address ?? "",
+          phone: r.phone ?? null,
+          websiteUrl: r.websiteUrl ?? null,
+          location: r.location ?? null,
+          matchedBy: matchedBy.length > 0 ? matchedBy : [],
+        };
+
+        if (matchedIds.length === total)        complete.push(entry);
+        else if (matchedIds.length > total / 2) majority.push(entry);
+        else if (matchedIds.length > 0)         partial.push(entry);
+      }
+
+      // Firebase cannot store empty arrays — replace with a placeholder so the
+      // SummaryScreen's toArray() can handle it gracefully.
+      const result = {
+        complete: complete.length > 0 ? complete : null,
+        majority: majority.length > 0 ? majority : null,
+        partial:  partial.length  > 0 ? partial  : null,
       };
-      if (matchedIds.length === total)        complete.push(entry);
-      else if (matchedIds.length > total / 2) majority.push(entry);
-      else if (matchedIds.length > 0)         partial.push(entry);
-    }
 
-    set(ref(db, `sessions/${sessionId}/result`), { complete, majority, partial })
-      .then(() => set(ref(db, `sessions/${sessionId}/phase`), "anticipation"))
-      .catch(console.error);
+      set(ref(db, `sessions/${sessionId}/result`), result)
+        .then(() => set(ref(db, `sessions/${sessionId}/phase`), "anticipation"))
+        .catch(console.error);
+    } catch (err) {
+      console.error("[swipe watcher] Failed to calculate or write results:", err);
+      // Reset the guard so it can retry on the next Firebase update
+      swipeAdvancedRef.current = false;
+    }
   }, [session, participantId, sessionId]);
 
   // ── Loading states ──
