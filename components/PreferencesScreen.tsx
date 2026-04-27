@@ -28,7 +28,16 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
   const prefNegativeResponses = session.responses?.preferencesNegative || {};
 
   async function handleContinue() {
-    await set(ref(db, `sessions/${sessionId}/phase`), "veto");
+    const participantCount = Object.keys(session.participants || {}).length;
+    const threshold = Math.ceil(participantCount / 2);
+    const vetoableCuisines = CUISINES.filter((cuisine) => {
+      const negativeCount = Object.values(prefNegativeResponses).filter(
+        (picks) => Array.isArray(picks) && (picks as string[]).includes(cuisine.id)
+      ).length;
+      return negativeCount < threshold;
+    });
+    const nextPhase = vetoableCuisines.length === 0 ? "generating-stack" : "veto";
+    await set(ref(db, `sessions/${sessionId}/phase`), nextPhase);
   }
 
   function cuisineLabel(id: string) {
@@ -155,7 +164,7 @@ export default function PreferencesScreen({ sessionId, session, participantId }:
             <p className="text-xs text-gray-400 text-center uppercase tracking-widest">
               Wanted to skip
             </p>
-            {Object.entries(skippedBy).map(([cuisineId, pids]) => (
+            {Object.entries(skippedBy).sort((a, b) => b[1].length - a[1].length).map(([cuisineId, pids]) => (
               <div
                 key={cuisineId}
                 className="bg-gray-800/60 rounded-xl px-4 py-3 flex justify-between items-center"

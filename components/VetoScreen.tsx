@@ -207,7 +207,6 @@ export default function VetoScreen({ sessionId, session, participantId }: Props)
               <>
                 <div className="text-center space-y-2">
                   <h2 className="text-2xl font-semibold">Nobody took anything off the table.</h2>
-                  <p className="text-gray-400 text-sm">Everything&apos;s in play.</p>
                 </div>
               </>
             ) : (
@@ -229,9 +228,6 @@ export default function VetoScreen({ sessionId, session, participantId }: Props)
                     );
                   })}
                 </div>
-                <p className="text-center text-gray-400 text-sm">
-                  Everything else is in play.
-                </p>
               </>
             )}
 

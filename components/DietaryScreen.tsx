@@ -125,10 +125,8 @@ export default function DietaryScreen({ sessionId, session, participantId }: Pro
         {iAmDone && (
           <>
             <div className="text-center space-y-1">
-              <h2 className="text-2xl font-semibold">You&apos;re all set.</h2>
-              <p className="text-gray-400 text-sm">
-                Everything&apos;s locked in — your stack is on the way.
-              </p>
+              <h2 className="text-2xl font-semibold">You&apos;re set.</h2>
+              <p className="text-gray-400 text-sm">Waiting for the group...</p>
             </div>
 
             {/* Who's ready — names only, no selections shown */}
