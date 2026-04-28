@@ -6,6 +6,29 @@ export interface Participant {
   joinedAt: number;
 }
 
+// ── V2.2: raw restaurant entry stored in the pre-built pool ─────────────────
+// Pool entries use Google Places API field names (latitude/longitude, not lat/lng).
+// They carry only the fields needed for filtering, sampling, and photo selection.
+// Full details are fetched at generate time for the 25 selected restaurants only.
+export interface PoolRestaurant {
+  id: string;
+  displayName: { text: string } | string;
+  rating?: number;
+  userRatingCount?: number;
+  priceLevel?: string;                    // e.g. "PRICE_LEVEL_MODERATE"
+  types?: string[];
+  location?: { latitude: number; longitude: number };
+  regularOpeningHours?: {
+    periods?: Array<{
+      open: { day: number; hour: number; minute: number };
+      close?: { day: number; hour: number; minute: number };
+    }>;
+    openNow?: boolean;
+    utcOffsetMinutes?: number;
+  };
+  photos?: Array<{ name: string; widthPx?: number; heightPx?: number }>;
+}
+
 // ── V2.0: real restaurant from Google Places, stored in Firebase stack ──────
 export interface StackRestaurant {
   id: string;                       // Google Places place ID
@@ -77,8 +100,13 @@ export interface Session {
     photosFilled?: boolean;       // V2.1: set to true by fill-photos route when complete
   };
 
-  // V2.1: category coverage at session location (set by check-coverage route)
+  // V2.1: category coverage — written by build-pool-p1 (replaced check-coverage in v2.2)
   categoryCoverage?: Record<string, boolean>;
+
+  // V2.2: pre-built restaurant pool, populated during lobby phase by build-pool-p1/p2/p3.
+  // Keyed by cuisineId, plus a "complete" boolean written by p3.
+  // Deleted immediately after stack generation to reclaim Firebase storage.
+  pool?: Record<string, unknown>;
 
   responses?: {
     dineIn?: Record<string, string>;

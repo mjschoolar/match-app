@@ -148,16 +148,17 @@ export default function Home() {
         },
       });
 
-      // Fire coverage check immediately after session creation — fire and forget.
-      // Runs in background while the creator navigates to the lobby and waits for
-      // others to join, giving it the maximum possible time to complete before the
-      // preference grid is shown. Results written to sessions/{sessionId}/categoryCoverage.
-      fetch("/api/check-coverage", {
+      // Fire pool build immediately after session creation — fire and forget.
+      // p1 fetches all 22 categories and writes categoryCoverage, then chains to p2 and p3.
+      // The full chain runs in the background while participants join the lobby.
+      // By the time the group reaches the preference grid, categoryCoverage is ready.
+      // By the time they reach generating-stack, the full pool is ready.
+      fetch("/api/build-pool-p1", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId, lat: location.lat, lng: location.lng }),
       }).catch((err) => {
-        console.error("[createSession] check-coverage failed:", err);
+        console.error("[createSession] build-pool-p1 failed:", err);
       });
 
       router.push(`/session/${sessionId}`);
