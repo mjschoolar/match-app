@@ -148,6 +148,18 @@ export default function Home() {
         },
       });
 
+      // Fire coverage check immediately after session creation — fire and forget.
+      // Runs in background while the creator navigates to the lobby and waits for
+      // others to join, giving it the maximum possible time to complete before the
+      // preference grid is shown. Results written to sessions/{sessionId}/categoryCoverage.
+      fetch("/api/check-coverage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, lat: location.lat, lng: location.lng }),
+      }).catch((err) => {
+        console.error("[createSession] check-coverage failed:", err);
+      });
+
       router.push(`/session/${sessionId}`);
     } catch {
       setError("Failed to create session. Please try again.");

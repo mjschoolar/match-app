@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
   await Promise.all(
     Object.entries(TYPE_MAP).map(async ([cuisineId, placeType]) => {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
 
       try {
         const resp = await fetch(NEARBY_URL, {

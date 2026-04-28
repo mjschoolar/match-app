@@ -8,7 +8,7 @@
 //     and overwrites location in Firebase (updates on all devices).
 //   - Location is required — if somehow absent, "Location not set" placeholder shown.
 
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import { db } from "@/lib/firebase";
 import { ref, set, remove } from "firebase/database";
 import { Session } from "@/lib/types";
@@ -27,24 +27,8 @@ export default function LobbyScreen({ sessionId, session, participantId }: Props
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState("");
 
-  // Change 7: fire check-coverage once when the creator enters the lobby and location is set.
-  // Runs in the background — no UI indication needed. Writes categoryCoverage to Firebase.
-  const coverageCalledRef = useRef(false);
-  useEffect(() => {
-    if (!isCreator || coverageCalledRef.current) return;
-    const lat = session.location?.lat;
-    const lng = session.location?.lng;
-    if (typeof lat !== "number" || typeof lng !== "number") return;
-
-    coverageCalledRef.current = true;
-    fetch("/api/check-coverage", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId, lat, lng }),
-    }).catch((err) => {
-      console.error("[LobbyScreen] check-coverage failed:", err);
-    });
-  }, [isCreator, session.location, sessionId]);
+  // Coverage check is fired from page.tsx immediately after session creation,
+  // before the creator navigates here. No call needed from LobbyScreen.
 
   // Location change affordance
   const [isChangingLocation, setIsChangingLocation] = useState(false);
