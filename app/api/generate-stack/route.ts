@@ -232,12 +232,15 @@ function shuffle<T>(arr: T[]): T[] {
 // No pagination: keeps Vercel function time well within the 10-second Hobby limit.
 // All category queries run in parallel (Promise.all), so total time ≈ slowest single call.
 // Individual call timeout: 6 seconds. Aborted calls return [] and don't block the route.
+//
+// Price filtering is NOT done at the API level — the Places API (New) searchNearby endpoint
+// does not support includedPriceLevels. Price is filtered client-side after fetch using the
+// priceLevel field returned on each result (see passesPriceFilter below).
 async function queryCategory(
   cuisineId: string,
   lat: number,
   lng: number,
   radiusMeters: number,
-  priceLevels: string[],
 ): Promise<Record<string, unknown>[]> {
   const key = process.env.GOOGLE_PLACES_API_KEY!;
   const placeType = TYPE_MAP[cuisineId];
@@ -253,11 +256,6 @@ async function queryCategory(
     },
     maxResultCount: 20,
   };
-
-  // Apply price filter only when it's not fully permissive
-  if (priceLevels.length < 4) {
-    body.includedPriceLevels = priceLevels;
-  }
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 6000);
@@ -309,6 +307,18 @@ function isCurrentlyOpen(place: Record<string, unknown>): boolean {
   if (!hours) return true; // unknown → don't exclude
   if (hours.openNow === false) return false;
   return true;
+}
+
+// Price filter applied client-side after fetch.
+// The Places API (New) searchNearby does not support price-level filtering in the
+// request body. We receive priceLevel on every result and filter here instead.
+// Restaurants with PRICE_LEVEL_UNSPECIFIED or no priceLevel are always passed through —
+// many legitimate restaurants have no price level set in Google's system.
+function passesPriceFilter(place: Record<string, unknown>, priceLevels: string[]): boolean {
+  if (priceLevels.length >= 4) return true; // fully permissive — skip filter
+  const priceEnum = place.priceLevel as string | undefined;
+  if (!priceEnum || priceEnum === "PRICE_LEVEL_UNSPECIFIED") return true; // unknown → don't exclude
+  return priceLevels.includes(priceEnum);
 }
 
 // ── Dietary soft-filtering weight ─────────────────────────────────────────────
@@ -635,11 +645,10 @@ export async function POST(req: NextRequest) {
           location.lat,
           location.lng,
           radiusMeters,
-          priceLevels,
         );
-        // Apply quality floor and open-hours filter
+        // Apply quality floor, open-hours filter, and client-side price filter
         categoryResults[cuisineId] = raw.filter(
-          (p) => passesQualityFloor(p) && isCurrentlyOpen(p)
+          (p) => passesQualityFloor(p) && isCurrentlyOpen(p) && passesPriceFilter(p, priceLevels)
         );
       })
     );
@@ -674,10 +683,9 @@ export async function POST(req: NextRequest) {
             location.lat,
             location.lng,
             radiusMeters,
-            priceLevels,
           );
           const filtered = raw.filter(
-            (p) => passesQualityFloor(p) && isCurrentlyOpen(p)
+            (p) => passesQualityFloor(p) && isCurrentlyOpen(p) && passesPriceFilter(p, priceLevels)
           );
           topOffPool.push(...filtered);
           totalQualifying += filtered.length;
