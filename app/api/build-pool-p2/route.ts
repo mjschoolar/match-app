@@ -189,10 +189,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Derive the base URL from the incoming request — same reason as p1.
+  const host = req.headers.get("host") ?? "localhost:3000";
+  const protocol = host.includes("localhost") ? "http" : "https";
+  const appUrl = `${protocol}://${host}`;
+
   const startTime = Date.now();
-  const appUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : "http://localhost:3000";
 
   try {
     // Read the pool written by p1 to find which categories have a nextPageToken

@@ -206,6 +206,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Derive the base URL from the incoming request so the p2 self-call always
+  // hits the correct deployment — VERCEL_URL can point to a stale or mismatched
+  // deployment URL in some environments.
+  const host = req.headers.get("host") ?? "localhost:3000";
+  const protocol = host.includes("localhost") ? "http" : "https";
+  const appUrl = `${protocol}://${host}`;
+
   const startTime = Date.now();
   logEvent(db, sessionId, "pool.p1.started", { lat, lng });
 
