@@ -17,7 +17,7 @@
 //
 // Fires p2 without awaiting (fire-and-forget). Returns immediately.
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { db } from "@/lib/firebase";
 import { ref, set } from "firebase/database";
 import { logEvent } from "@/lib/logEvent";
@@ -252,17 +252,21 @@ export async function POST(req: NextRequest) {
       coverageWritten: true,
     });
 
-    // Fire p2 without awaiting — the chain runs fully in the background.
-    // VERCEL_URL is automatically set by Vercel on all deployments.
+    // Fire p2 after the response is sent.
+    // `after()` tells Vercel to keep this function alive until the callback
+    // completes — without it, the serverless context may freeze before the
+    // outbound fetch is delivered, silently dropping the p2 request.
     const appUrl = process.env.VERCEL_URL
       ? `https://${process.env.VERCEL_URL}`
       : "http://localhost:3000";
 
-    fetch(`${appUrl}/api/build-pool-p2`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId, lat, lng }),
-    }).catch((err) => console.error("[build-pool-p1] Failed to fire p2:", err));
+    after(() => {
+      fetch(`${appUrl}/api/build-pool-p2`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, lat, lng }),
+      }).catch((err) => console.error("[build-pool-p1] Failed to fire p2:", err));
+    });
 
     return NextResponse.json({ ok: true });
   } catch (err) {

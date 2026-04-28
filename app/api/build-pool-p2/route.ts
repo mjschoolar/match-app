@@ -11,7 +11,7 @@
 //
 // Fires p3 without awaiting (fire-and-forget). Returns immediately.
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { db } from "@/lib/firebase";
 import { ref, get, update } from "firebase/database";
 import { logEvent } from "@/lib/logEvent";
@@ -228,11 +228,13 @@ export async function POST(req: NextRequest) {
         totalNewQualifying: 0,
       });
 
-      fetch(`${appUrl}/api/build-pool-p3`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId, lat, lng }),
-      }).catch((err) => console.error("[build-pool-p2] Failed to fire p3:", err));
+      after(() => {
+        fetch(`${appUrl}/api/build-pool-p3`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId, lat, lng }),
+        }).catch((err) => console.error("[build-pool-p2] Failed to fire p3:", err));
+      });
 
       return NextResponse.json({ ok: true, fetched: 0 });
     }
@@ -272,12 +274,14 @@ export async function POST(req: NextRequest) {
       totalNewQualifying,
     });
 
-    // Fire p3 without awaiting
-    fetch(`${appUrl}/api/build-pool-p3`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId, lat, lng }),
-    }).catch((err) => console.error("[build-pool-p2] Failed to fire p3:", err));
+    // Fire p3 after the response is sent — same `after()` pattern as p1→p2.
+    after(() => {
+      fetch(`${appUrl}/api/build-pool-p3`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, lat, lng }),
+      }).catch((err) => console.error("[build-pool-p2] Failed to fire p3:", err));
+    });
 
     return NextResponse.json({ ok: true, fetched: categoriesToFetch.length });
   } catch (err) {
