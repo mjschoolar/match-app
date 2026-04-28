@@ -157,18 +157,20 @@ export default function Home() {
         locationSource: location.source,
       });
 
-      // Fire pool build immediately after session creation — fire and forget.
-      // p1 fetches all 22 categories and writes categoryCoverage, then chains to p2 and p3.
-      // The full chain runs in the background while participants join the lobby.
-      // By the time the group reaches the preference grid, categoryCoverage is ready.
-      // By the time they reach generating-stack, the full pool is ready.
-      fetch("/api/build-pool-p1", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId, lat: location.lat, lng: location.lng }),
-      }).catch((err) => {
-        console.error("[createSession] build-pool-p1 failed:", err);
-      });
+      // Fire pool build chain from the client — p1 then p2 then p3, each awaited
+      // before the next fires. Running the chain here (in the browser tab) is more
+      // reliable than server-to-server self-calls, which Vercel can silently drop.
+      // The tab stays alive through the lobby, so the chain completes in the background.
+      const poolBody = JSON.stringify({ sessionId, lat: location.lat, lng: location.lng });
+      (async () => {
+        try {
+          await fetch("/api/build-pool-p1", { method: "POST", headers: { "Content-Type": "application/json" }, body: poolBody });
+          await fetch("/api/build-pool-p2", { method: "POST", headers: { "Content-Type": "application/json" }, body: poolBody });
+          await fetch("/api/build-pool-p3", { method: "POST", headers: { "Content-Type": "application/json" }, body: poolBody });
+        } catch (err) {
+          console.error("[createSession] pool build chain failed:", err);
+        }
+      })();
 
       router.push(`/session/${sessionId}`);
     } catch {

@@ -17,7 +17,7 @@
 //
 // Fires p2 without awaiting (fire-and-forget). Returns immediately.
 
-import { NextRequest, NextResponse, after } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebase";
 import { ref, set } from "firebase/database";
 import { logEvent } from "@/lib/logEvent";
@@ -206,13 +206,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Derive the base URL from the incoming request so the p2 self-call always
-  // hits the correct deployment — VERCEL_URL can point to a stale or mismatched
-  // deployment URL in some environments.
-  const host = req.headers.get("host") ?? "localhost:3000";
-  const protocol = host.includes("localhost") ? "http" : "https";
-  const appUrl = `${protocol}://${host}`;
-
   const startTime = Date.now();
   logEvent(db, sessionId, "pool.p1.started", { lat, lng });
 
@@ -257,22 +250,6 @@ export async function POST(req: NextRequest) {
       categoriesWithTokens,
       totalQualifying,
       coverageWritten: true,
-    });
-
-    // Fire p2 after the response is sent.
-    // `after()` tells Vercel to keep this function alive until the callback
-    // completes — without it, the serverless context may freeze before the
-    // outbound fetch is delivered, silently dropping the p2 request.
-    const appUrl = process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : "http://localhost:3000";
-
-    after(() => {
-      fetch(`${appUrl}/api/build-pool-p2`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId, lat, lng }),
-      }).catch((err) => console.error("[build-pool-p1] Failed to fire p2:", err));
     });
 
     return NextResponse.json({ ok: true });
