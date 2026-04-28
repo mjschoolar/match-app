@@ -231,6 +231,7 @@ function shuffle<T>(arr: T[]): T[] {
 // Query one category — single fetch, 20 results max.
 // No pagination: keeps Vercel function time well within the 10-second Hobby limit.
 // All category queries run in parallel (Promise.all), so total time ≈ slowest single call.
+// Individual call timeout: 6 seconds. Aborted calls return [] and don't block the route.
 async function queryCategory(
   cuisineId: string,
   lat: number,
@@ -258,24 +259,36 @@ async function queryCategory(
     body.includedPriceLevels = priceLevels;
   }
 
-  const resp = await fetch(NEARBY_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Goog-Api-Key": key,
-      "X-Goog-FieldMask": FIELD_MASK,
-    },
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 6000);
 
-  const data = await resp.json();
+  try {
+    const resp = await fetch(NEARBY_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": key,
+        "X-Goog-FieldMask": FIELD_MASK,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
 
-  if (data.error) {
-    console.error(`[generate-stack] Places API error for ${cuisineId}:`, data.error);
+    const data = await resp.json();
+
+    if (data.error) {
+      console.error(`[generate-stack] Places API error for ${cuisineId}:`, JSON.stringify(data.error));
+      return [];
+    }
+
+    return data.places || [];
+  } catch (err) {
+    const isTimeout = (err as Error).name === "AbortError";
+    console.error(`[generate-stack] queryCategory ${isTimeout ? "timed out" : "failed"} for ${cuisineId}:`, err);
     return [];
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  return data.places || [];
 }
 
 // ── Quality and availability filters ─────────────────────────────────────────
@@ -355,15 +368,20 @@ function getCategorySlotBoost(cuisineId: string, restrictions: Set<string>): num
 
 async function resolvePhoto(photoName: string): Promise<string | null> {
   const key = process.env.GOOGLE_PLACES_API_KEY!;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 4000);
   try {
     const resp = await fetch(
-      `${PHOTO_BASE}/${photoName}/media?maxWidthPx=800&skipHttpRedirect=true&key=${key}`
+      `${PHOTO_BASE}/${photoName}/media?maxWidthPx=800&skipHttpRedirect=true&key=${key}`,
+      { signal: controller.signal }
     );
     if (!resp.ok) return null;
     const data = await resp.json();
     return (data.photoUri as string) || null;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -533,10 +551,23 @@ export async function POST(req: NextRequest) {
       .map(([id]) => id);
 
     if (poolIds.length === 0) {
-      // Edge case: every positively-picked category was excluded
-      // Fall back to full non-excluded set at 1× weight
-      for (const id of Object.keys(TYPE_MAP)) {
-        if (!exclusionSet.has(id)) weights[id] = 1;
+      // No preferences selected (or every positively-picked category was excluded).
+      // Query a representative spread of 10 common categories rather than all 22 —
+      // all 22 in parallel risks Vercel's 10-second function limit on cold starts.
+      // These 10 cover the most common cuisine types in any US metro area.
+      const NO_PREF_DEFAULTS = [
+        "american", "mexican", "italian", "japanese", "chinese",
+        "thai", "korean", "burgers", "pizza", "fast-food",
+      ];
+      for (const id of NO_PREF_DEFAULTS) {
+        if (!exclusionSet.has(id) && TYPE_MAP[id]) weights[id] = 1;
+      }
+      // If exclusions wiped most defaults, top up from remaining categories
+      if (Object.keys(weights).length < 5) {
+        for (const id of Object.keys(TYPE_MAP)) {
+          if (!exclusionSet.has(id) && !weights[id]) weights[id] = 1;
+          if (Object.keys(weights).length >= 10) break;
+        }
       }
     } else {
       for (const id of poolIds) {
@@ -576,7 +607,7 @@ export async function POST(req: NextRequest) {
     const distanceValues = (Object.values(distanceResponses) as number[]).filter(
       (v) => typeof v === "number"
     );
-    const resolvedMiles = Math.max(1, Math.min(15, median(distanceValues.length > 0 ? distanceValues : [5])));
+    const resolvedMiles = Math.max(1, Math.min(30, median(distanceValues.length > 0 ? distanceValues : [5])));
     const radiusMeters = resolvedMiles * 1609.34;
 
     const priceResponses = responses.price || {};
@@ -727,9 +758,13 @@ export async function POST(req: NextRequest) {
     const shuffled = shuffle(sampledRestaurants);
 
     // ── Stage 8 — Resolve photos ──────────────────────────────────────────
+    // Cap at 20 concurrent photo calls to stay within Vercel's 10-second limit.
+    // Restaurants beyond the cap get null photoUrl (fallback grey tile on card).
 
+    const PHOTO_CONCURRENCY_CAP = 20;
     const photoResults = await Promise.all(
-      shuffled.map(async ({ place }) => {
+      shuffled.map(async ({ place }, idx) => {
+        if (idx >= PHOTO_CONCURRENCY_CAP) return null;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const photos = place.photos as any[];
         if (!photos?.length) return null;
