@@ -1,5 +1,5 @@
 // app/api/build-pool-p2/route.ts
-// V2.2 — Pool builder, page 2.
+// V2.2.1 — Pool builder, page 2. Added session event logging.
 //
 // Called by build-pool-p1 (fire-and-forget). Reads the nextPageToken stored
 // by p1 for each category and fetches page 2 for categories where a token
@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebase";
 import { ref, get, update } from "firebase/database";
+import { logEvent } from "@/lib/logEvent";
 
 const TEXT_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText";
 
@@ -188,68 +189,105 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Read the pool written by p1 to find which categories have a nextPageToken
-  const poolSnap = await get(ref(db, `sessions/${sessionId}/pool`));
-  const pool = poolSnap.val() as Record<string, { p1?: unknown[]; nextPageToken?: string | null }> | null;
+  const startTime = Date.now();
+  const appUrl = process.env.VERCEL_URL
+    ? `https://${process.env.VERCEL_URL}`
+    : "http://localhost:3000";
 
-  if (!pool) {
-    console.error(`[build-pool-p2] No pool data found for session ${sessionId}`);
-    return NextResponse.json({ error: "Pool not found" }, { status: 404 });
-  }
+  try {
+    // Read the pool written by p1 to find which categories have a nextPageToken
+    const poolSnap = await get(ref(db, `sessions/${sessionId}/pool`));
+    const pool = poolSnap.val() as Record<string, { p1?: unknown[]; nextPageToken?: string | null }> | null;
 
-  // Determine which categories need a page 2 fetch:
-  //   - nextPageToken is present (API hit its 20-result cap and has more)
-  //   - not "fast-food" (excluded from pagination by design — page 1 is sufficient)
-  const categoriesToFetch = Object.keys(TYPE_MAP).filter((cuisineId) => {
-    if (cuisineId === "fast-food") return false;
-    const token = pool[cuisineId]?.nextPageToken;
-    return typeof token === "string" && token.length > 0;
-  });
+    if (!pool) {
+      console.error(`[build-pool-p2] No pool data found for session ${sessionId}`);
+      logEvent(db, sessionId, "error", {
+        route: "build-pool-p2",
+        message: "No pool data found — p1 may not have completed",
+      });
+      return NextResponse.json({ error: "Pool not found" }, { status: 404 });
+    }
 
-  if (categoriesToFetch.length === 0) {
-    // Nothing to paginate — fire p3 anyway so it can write pool/complete
-    const appUrl = process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : "http://localhost:3000";
+    // Determine which categories need a page 2 fetch:
+    //   - nextPageToken is present (API hit its 20-result cap and has more)
+    //   - not "fast-food" (excluded from pagination by design — page 1 is sufficient)
+    const categoriesToFetch = Object.keys(TYPE_MAP).filter((cuisineId) => {
+      if (cuisineId === "fast-food") return false;
+      const token = pool[cuisineId]?.nextPageToken;
+      return typeof token === "string" && token.length > 0;
+    });
+
+    logEvent(db, sessionId, "pool.p2.started", { categoriesToFetch });
+
+    if (categoriesToFetch.length === 0) {
+      // Nothing to paginate — fire p3 anyway so it can write pool/complete
+      logEvent(db, sessionId, "pool.p2.completed", {
+        durationMs: Date.now() - startTime,
+        categoryCounts: {},
+        categoriesWithTokens: [],
+        totalNewQualifying: 0,
+      });
+
+      fetch(`${appUrl}/api/build-pool-p3`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, lat, lng }),
+      }).catch((err) => console.error("[build-pool-p2] Failed to fire p3:", err));
+
+      return NextResponse.json({ ok: true, fetched: 0 });
+    }
+
+    // Fetch page 2 for qualifying categories in parallel
+    const fetchResults = await Promise.all(
+      categoriesToFetch.map(async (cuisineId) => {
+        const pageToken = pool[cuisineId]!.nextPageToken as string;
+        const { places, nextPageToken } = await fetchCategoryPage2(key, cuisineId, lat, lng, pageToken);
+        const filtered = places.filter(
+          (p) => passesVenueFilter(p) && passesQualityFloor(p)
+        );
+        return { cuisineId, places: filtered, nextPageToken };
+      })
+    );
+
+    // Write p2 results and nextPageToken2 values using a multi-path update
+    const updates: Record<string, unknown> = {};
+    for (const { cuisineId, places, nextPageToken } of fetchResults) {
+      updates[`sessions/${sessionId}/pool/${cuisineId}/p2`] = places;
+      updates[`sessions/${sessionId}/pool/${cuisineId}/nextPageToken2`] = nextPageToken ?? null;
+    }
+    await update(ref(db), updates);
+
+    const categoryCounts = Object.fromEntries(
+      fetchResults.map(({ cuisineId, places }) => [cuisineId, places.length])
+    );
+    const categoriesWithTokens = fetchResults
+      .filter(({ nextPageToken }) => nextPageToken !== null)
+      .map(({ cuisineId }) => cuisineId);
+    const totalNewQualifying = fetchResults.reduce((sum, { places }) => sum + places.length, 0);
+
+    logEvent(db, sessionId, "pool.p2.completed", {
+      durationMs: Date.now() - startTime,
+      categoryCounts,
+      categoriesWithTokens,
+      totalNewQualifying,
+    });
+
+    // Fire p3 without awaiting
     fetch(`${appUrl}/api/build-pool-p3`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sessionId, lat, lng }),
     }).catch((err) => console.error("[build-pool-p2] Failed to fire p3:", err));
 
-    return NextResponse.json({ ok: true, fetched: 0 });
+    return NextResponse.json({ ok: true, fetched: categoriesToFetch.length });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("[build-pool-p2] Fatal error:", message, "sessionId:", sessionId);
+    logEvent(db, sessionId, "error", {
+      route: "build-pool-p2",
+      message,
+      durationMs: Date.now() - startTime,
+    });
+    return NextResponse.json({ error: "Pool build p2 failed" }, { status: 500 });
   }
-
-  // Fetch page 2 for qualifying categories in parallel
-  const fetchResults = await Promise.all(
-    categoriesToFetch.map(async (cuisineId) => {
-      const pageToken = pool[cuisineId]!.nextPageToken as string;
-      const { places, nextPageToken } = await fetchCategoryPage2(key, cuisineId, lat, lng, pageToken);
-      const filtered = places.filter(
-        (p) => passesVenueFilter(p) && passesQualityFloor(p)
-      );
-      return { cuisineId, places: filtered, nextPageToken };
-    })
-  );
-
-  // Write p2 results and nextPageToken2 values using a multi-path update
-  const updates: Record<string, unknown> = {};
-  for (const { cuisineId, places, nextPageToken } of fetchResults) {
-    updates[`sessions/${sessionId}/pool/${cuisineId}/p2`] = places;
-    updates[`sessions/${sessionId}/pool/${cuisineId}/nextPageToken2`] = nextPageToken ?? null;
-  }
-  await update(ref(db), updates);
-
-  // Fire p3 without awaiting
-  const appUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : "http://localhost:3000";
-
-  fetch(`${appUrl}/api/build-pool-p3`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sessionId, lat, lng }),
-  }).catch((err) => console.error("[build-pool-p2] Failed to fire p3:", err));
-
-  return NextResponse.json({ ok: true, fetched: categoriesToFetch.length });
 }

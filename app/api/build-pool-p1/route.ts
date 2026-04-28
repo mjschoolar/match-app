@@ -1,5 +1,5 @@
 // app/api/build-pool-p1/route.ts
-// V2.2 — Pool builder, page 1.
+// V2.2.1 — Pool builder, page 1. Added session event logging.
 //
 // Fetches the first page of results (up to 20) for all 22 Match cuisine
 // categories at a 15-mile radius around the session location. Uses the
@@ -20,6 +20,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebase";
 import { ref, set } from "firebase/database";
+import { logEvent } from "@/lib/logEvent";
 
 const TEXT_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText";
 
@@ -205,42 +206,73 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Fetch all 22 categories in parallel
-  const fetchResults = await Promise.all(
-    Object.keys(TYPE_MAP).map(async (cuisineId) => {
-      const { places, nextPageToken } = await fetchCategoryPage1(key, cuisineId, lat, lng);
-      const filtered = places.filter(
-        (p) => passesVenueFilter(p) && passesQualityFloor(p)
-      );
-      return { cuisineId, places: filtered, nextPageToken };
-    })
-  );
+  const startTime = Date.now();
+  logEvent(db, sessionId, "pool.p1.started", { lat, lng });
 
-  // Build pool data and derive coverage from p1 results
-  const poolData: Record<string, unknown> = {};
-  const coverage: Record<string, boolean> = {};
+  try {
+    // Fetch all 22 categories in parallel
+    const fetchResults = await Promise.all(
+      Object.keys(TYPE_MAP).map(async (cuisineId) => {
+        const { places, nextPageToken } = await fetchCategoryPage1(key, cuisineId, lat, lng);
+        const filtered = places.filter(
+          (p) => passesVenueFilter(p) && passesQualityFloor(p)
+        );
+        return { cuisineId, places: filtered, nextPageToken };
+      })
+    );
 
-  for (const { cuisineId, places, nextPageToken } of fetchResults) {
-    poolData[cuisineId] = { p1: places, nextPageToken };
-    // A category has coverage if at least one qualifying restaurant was found
-    coverage[cuisineId] = places.length > 0;
+    // Build pool data and derive coverage from p1 results
+    const poolData: Record<string, unknown> = {};
+    const coverage: Record<string, boolean> = {};
+
+    for (const { cuisineId, places, nextPageToken } of fetchResults) {
+      poolData[cuisineId] = { p1: places, nextPageToken };
+      // A category has coverage if at least one qualifying restaurant was found
+      coverage[cuisineId] = places.length > 0;
+    }
+
+    // Write pool data and categoryCoverage to Firebase
+    await set(ref(db, `sessions/${sessionId}/pool`), poolData);
+    await set(ref(db, `sessions/${sessionId}/categoryCoverage`), coverage);
+
+    // Log completion with per-category counts and token list
+    const categoryCounts = Object.fromEntries(
+      fetchResults.map(({ cuisineId, places }) => [cuisineId, places.length])
+    );
+    const categoriesWithTokens = fetchResults
+      .filter(({ nextPageToken }) => nextPageToken !== null)
+      .map(({ cuisineId }) => cuisineId);
+    const totalQualifying = fetchResults.reduce((sum, { places }) => sum + places.length, 0);
+
+    logEvent(db, sessionId, "pool.p1.completed", {
+      durationMs: Date.now() - startTime,
+      categoryCounts,
+      categoriesWithTokens,
+      totalQualifying,
+      coverageWritten: true,
+    });
+
+    // Fire p2 without awaiting — the chain runs fully in the background.
+    // VERCEL_URL is automatically set by Vercel on all deployments.
+    const appUrl = process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : "http://localhost:3000";
+
+    fetch(`${appUrl}/api/build-pool-p2`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId, lat, lng }),
+    }).catch((err) => console.error("[build-pool-p1] Failed to fire p2:", err));
+
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("[build-pool-p1] Fatal error:", message, "sessionId:", sessionId);
+    logEvent(db, sessionId, "error", {
+      route: "build-pool-p1",
+      message,
+      durationMs: Date.now() - startTime,
+    });
+    return NextResponse.json({ error: "Pool build p1 failed" }, { status: 500 });
   }
-
-  // Write pool data and categoryCoverage to Firebase
-  await set(ref(db, `sessions/${sessionId}/pool`), poolData);
-  await set(ref(db, `sessions/${sessionId}/categoryCoverage`), coverage);
-
-  // Fire p2 without awaiting — the chain runs fully in the background.
-  // VERCEL_URL is automatically set by Vercel on all deployments.
-  const appUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : "http://localhost:3000";
-
-  fetch(`${appUrl}/api/build-pool-p2`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sessionId, lat, lng }),
-  }).catch((err) => console.error("[build-pool-p1] Failed to fire p2:", err));
-
-  return NextResponse.json({ ok: true });
 }

@@ -15,6 +15,7 @@ import { useRouter } from "next/navigation";
 import { db } from "@/lib/firebase";
 import { ref, set, get } from "firebase/database";
 import { generateSessionId, generateParticipantId } from "@/lib/session";
+import { logEvent } from "@/lib/logEvent";
 
 type Mode = "home" | "start" | "location-manual" | "join";
 
@@ -146,6 +147,14 @@ export default function Home() {
             joinedAt: now,
           },
         },
+      });
+
+      // Log session creation — fire and forget.
+      logEvent(db, sessionId, "session.created", {
+        locationLabel: location.label,
+        lat: location.lat,
+        lng: location.lng,
+        locationSource: location.source,
       });
 
       // Fire pool build immediately after session creation — fire and forget.

@@ -1,5 +1,5 @@
 // app/api/build-pool-p3/route.ts
-// V2.2 — Pool builder, page 3.
+// V2.2.1 — Pool builder, page 3. Added session event logging.
 //
 // Called by build-pool-p2 (fire-and-forget). Same pattern as p2 — reads
 // nextPageToken2 values written by p2 and fetches page 3 for categories
@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebase";
 import { ref, get, update, set } from "firebase/database";
+import { logEvent } from "@/lib/logEvent";
 
 const TEXT_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText";
 
@@ -186,46 +187,85 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Read pool to find categories with a nextPageToken2 (written by p2)
-  const poolSnap = await get(ref(db, `sessions/${sessionId}/pool`));
-  const pool = poolSnap.val() as Record<string, { nextPageToken2?: string | null }> | null;
+  const startTime = Date.now();
 
-  if (!pool) {
-    console.error(`[build-pool-p3] No pool data found for session ${sessionId}`);
-    // Still write complete:true so generate-stack can proceed with what we have
-    await set(ref(db, `sessions/${sessionId}/pool/complete`), true);
-    return NextResponse.json({ error: "Pool not found" }, { status: 404 });
-  }
+  try {
+    // Read pool to find categories with a nextPageToken2 (written by p2)
+    const poolSnap = await get(ref(db, `sessions/${sessionId}/pool`));
+    const pool = poolSnap.val() as Record<string, { nextPageToken2?: string | null }> | null;
 
-  // Categories eligible for page 3: have a nextPageToken2 and are not fast-food
-  const categoriesToFetch = Object.keys(TYPE_MAP).filter((cuisineId) => {
-    if (cuisineId === "fast-food") return false;
-    const token = pool[cuisineId]?.nextPageToken2;
-    return typeof token === "string" && token.length > 0;
-  });
-
-  if (categoriesToFetch.length > 0) {
-    const fetchResults = await Promise.all(
-      categoriesToFetch.map(async (cuisineId) => {
-        const pageToken = pool[cuisineId]!.nextPageToken2 as string;
-        const places = await fetchCategoryPage3(key, cuisineId, lat, lng, pageToken);
-        const filtered = places.filter(
-          (p) => passesVenueFilter(p) && passesQualityFloor(p)
-        );
-        return { cuisineId, places: filtered };
-      })
-    );
-
-    // Write p3 results using a multi-path update
-    const updates: Record<string, unknown> = {};
-    for (const { cuisineId, places } of fetchResults) {
-      updates[`sessions/${sessionId}/pool/${cuisineId}/p3`] = places;
+    if (!pool) {
+      console.error(`[build-pool-p3] No pool data found for session ${sessionId}`);
+      logEvent(db, sessionId, "error", {
+        route: "build-pool-p3",
+        message: "No pool data found — marking complete with what we have",
+      });
+      await set(ref(db, `sessions/${sessionId}/pool/complete`), true);
+      return NextResponse.json({ error: "Pool not found" }, { status: 404 });
     }
-    await update(ref(db), updates);
+
+    // Categories eligible for page 3: have a nextPageToken2 and are not fast-food
+    const categoriesToFetch = Object.keys(TYPE_MAP).filter((cuisineId) => {
+      if (cuisineId === "fast-food") return false;
+      const token = pool[cuisineId]?.nextPageToken2;
+      return typeof token === "string" && token.length > 0;
+    });
+
+    logEvent(db, sessionId, "pool.p3.started", { categoriesToFetch });
+
+    if (categoriesToFetch.length > 0) {
+      const fetchResults = await Promise.all(
+        categoriesToFetch.map(async (cuisineId) => {
+          const pageToken = pool[cuisineId]!.nextPageToken2 as string;
+          const places = await fetchCategoryPage3(key, cuisineId, lat, lng, pageToken);
+          const filtered = places.filter(
+            (p) => passesVenueFilter(p) && passesQualityFloor(p)
+          );
+          return { cuisineId, places: filtered };
+        })
+      );
+
+      // Write p3 results using a multi-path update
+      const updates: Record<string, unknown> = {};
+      for (const { cuisineId, places } of fetchResults) {
+        updates[`sessions/${sessionId}/pool/${cuisineId}/p3`] = places;
+      }
+      await update(ref(db), updates);
+
+      const categoryCounts = Object.fromEntries(
+        fetchResults.map(({ cuisineId, places }) => [cuisineId, places.length])
+      );
+      const totalNewQualifying = fetchResults.reduce((sum, { places }) => sum + places.length, 0);
+
+      logEvent(db, sessionId, "pool.p3.completed", {
+        durationMs: Date.now() - startTime,
+        categoryCounts,
+        totalNewQualifying,
+        poolBuildComplete: true,
+      });
+    } else {
+      logEvent(db, sessionId, "pool.p3.completed", {
+        durationMs: Date.now() - startTime,
+        categoryCounts: {},
+        totalNewQualifying: 0,
+        poolBuildComplete: true,
+      });
+    }
+
+    // Write pool/complete: true — signals to generate-stack that the full pool is ready
+    await set(ref(db, `sessions/${sessionId}/pool/complete`), true);
+
+    return NextResponse.json({ ok: true, fetched: categoriesToFetch.length });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("[build-pool-p3] Fatal error:", message, "sessionId:", sessionId);
+    logEvent(db, sessionId, "error", {
+      route: "build-pool-p3",
+      message,
+      durationMs: Date.now() - startTime,
+    });
+    // Still write complete so generate-stack can proceed with what's available
+    await set(ref(db, `sessions/${sessionId}/pool/complete`), true).catch(() => {});
+    return NextResponse.json({ error: "Pool build p3 failed" }, { status: 500 });
   }
-
-  // Write pool/complete: true — signals to generate-stack that the full pool is ready
-  await set(ref(db, `sessions/${sessionId}/pool/complete`), true);
-
-  return NextResponse.json({ ok: true, fetched: categoriesToFetch.length });
 }

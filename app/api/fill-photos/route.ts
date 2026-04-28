@@ -1,5 +1,5 @@
 // app/api/fill-photos/route.ts
-// Change 5: Second-pass photo fill.
+// V2.2.1 — Second-pass photo fill. Added session event logging.
 //
 // The main generate-stack route caps photo resolution at 20 concurrent calls to
 // stay within Vercel's 10-second function limit. Restaurants beyond the cap are
@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebase";
 import { ref, get, set } from "firebase/database";
+import { logEvent } from "@/lib/logEvent";
 import type { StackRestaurant } from "@/lib/types";
 
 const PHOTO_BASE = "https://places.googleapis.com/v1";
@@ -48,6 +49,8 @@ export async function POST(req: NextRequest) {
   if (!sessionId) {
     return NextResponse.json({ error: "sessionId required" }, { status: 400 });
   }
+
+  const startTime = Date.now();
 
   try {
     const stackRef = ref(db, `sessions/${sessionId}/stack`);
@@ -94,6 +97,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, filled: 0 });
     }
 
+    logEvent(db, sessionId, "fill_photos.started", {
+      nullPhotoCount: nullPhotoEntries.length,
+    });
+
     let filled = 0;
 
     // Resolve photos in parallel, writing each result to Firebase individually
@@ -111,13 +118,26 @@ export async function POST(req: NextRequest) {
       })
     );
 
+    logEvent(db, sessionId, "fill_photos.completed", {
+      durationMs: Date.now() - startTime,
+      attempted: nullPhotoEntries.length,
+      resolved: filled,
+      stillNull: nullPhotoEntries.length - filled,
+    });
+
     // Mark fill as complete — whatever resolved is in Firebase, the rest fall back
     // to cuisine hero images in SwipeCard.
     await set(ref(db, `sessions/${sessionId}/stack/photosFilled`), true);
 
     return NextResponse.json({ ok: true, filled });
   } catch (err) {
-    console.error("[fill-photos] Error:", err, "sessionId:", sessionId);
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("[fill-photos] Error:", message, "sessionId:", sessionId);
+    logEvent(db, sessionId, "error", {
+      route: "fill-photos",
+      message,
+      durationMs: Date.now() - startTime,
+    });
     // Do not write photosFilled on error — the client accepts the partial state
     return NextResponse.json({ error: "Fill photos failed" }, { status: 500 });
   }

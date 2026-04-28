@@ -1,5 +1,6 @@
 // app/api/generate-stack/route.ts
-// V2.2 — Read-filter-sample from pre-built pool, with direct API fallback.
+// V2.2.1 — Read-filter-sample from pre-built pool, with direct API fallback.
+//          Added session event logging throughout both paths.
 //
 // Primary path (pool ready):
 //   Reads the pre-built pool from Firebase, applies session-specific filters
@@ -19,6 +20,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebase";
 import { ref, get, set, remove } from "firebase/database";
+import { logEvent } from "@/lib/logEvent";
 import type { StackRestaurant } from "@/lib/types";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -348,7 +350,6 @@ function deduplicateByName(
       const la = (a.location as any);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const lb = (b.location as any);
-      // Pool entries use {latitude, longitude}; direct API entries use {latitude, longitude} too
       const aLat = la?.latitude ?? la?.lat;
       const aLng = la?.longitude ?? la?.lng;
       const bLat = lb?.latitude ?? lb?.lat;
@@ -397,8 +398,6 @@ function transformPlace(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const accessibilityOpts = place.accessibilityOptions as any;
 
-  // Support both Google's {latitude, longitude} format (pool/details) and
-  // any legacy {lat, lng} format
   const placeLat = locationObj?.latitude ?? locationObj?.lat;
   const placeLng = locationObj?.longitude ?? locationObj?.lng;
 
@@ -460,7 +459,7 @@ function transformPlace(
   };
 }
 
-// ── V2.1 direct API path (unchanged, used as fallback) ────────────────────────
+// ── V2.1 direct API path (unchanged logic, used as fallback) ──────────────────
 
 async function queryCategory(
   cuisineId: string,
@@ -515,6 +514,7 @@ async function queryCategory(
 async function generateStackDirectly(sessionId: string): Promise<NextResponse> {
   const key = process.env.GOOGLE_PLACES_API_KEY!;
   const sessionRef = ref(db, `sessions/${sessionId}`);
+  const generateStart = Date.now();
 
   try {
     const snap = await get(sessionRef);
@@ -609,6 +609,22 @@ async function generateStackDirectly(sessionId: string): Promise<NextResponse> {
       for (const r of (picks || [])) allRestrictions.add(r);
     }
 
+    // Log generate.started — after resolution so we can include session params
+    const coverage = session.categoryCoverage as Record<string, boolean> | undefined;
+    const hiddenCategories = coverage
+      ? Object.keys(coverage).filter(k => coverage[k] === false)
+      : [];
+
+    logEvent(db, sessionId, "generate.started", {
+      path: "fallback",
+      sessionDistance: resolvedMiles,
+      sessionPrice: resolvedPrice,
+      selectedCategories: preferencePoolIds,
+      hiddenCategories,
+      dineIn: responses.dineIn ?? {},
+      participantCount,
+    });
+
     // Stage 3 — Live API fetch
     const categoryResults: Record<string, Record<string, unknown>[]> = {};
     await Promise.all(
@@ -625,6 +641,8 @@ async function generateStackDirectly(sessionId: string): Promise<NextResponse> {
     // Stage 4 — Graceful expansion (live API calls)
     const topOffPool: Record<string, unknown>[] = [];
     const expandedCategories = new Set<string>(preferencePoolIds);
+    const expansionDetails: Array<{ cuisineId: string; added: number }> = [];
+
     if (totalQualifying < EXPANSION_TRIGGER) {
       const sortedPoolIds = [...preferencePoolIds].sort((a, b) => weights[b] - weights[a]);
       outer:
@@ -637,10 +655,17 @@ async function generateStackDirectly(sessionId: string): Promise<NextResponse> {
             (p) => passesVenueFilter(p) && passesQualityFloor(p) && isCurrentlyOpen(p) && passesPriceFilter(p, priceLevels)
           );
           topOffPool.push(...filtered);
+          expansionDetails.push({ cuisineId: targetId, added: filtered.length });
           totalQualifying += filtered.length;
           if (totalQualifying >= EXPANSION_TRIGGER) break outer;
         }
       }
+
+      logEvent(db, sessionId, "generate.expansion.completed", {
+        expandedCategories: expansionDetails.map(d => d.cuisineId),
+        addedCount: expansionDetails.reduce((sum, d) => sum + d.added, 0),
+        newTotal: totalQualifying,
+      });
     }
 
     // Stage 4b — Dedup
@@ -660,8 +685,19 @@ async function generateStackDirectly(sessionId: string): Promise<NextResponse> {
     topOffPool.push(...dedupedTopOff);
     totalQualifying = Object.values(categoryResults).reduce((sum, arr) => sum + arr.length, 0) + topOffPool.length;
 
+    // Log filter counts (direct path — single-pass, totals only)
+    logEvent(db, sessionId, "generate.filters.applied", {
+      path: "fallback",
+      totalAfterFilters: totalQualifying,
+      note: "Direct path applies all filters in a single pass — per-stage counts not tracked",
+    });
+
     // Stage 5 — Thin-pool check
     if (totalQualifying < RECOVERY_TRIGGER) {
+      logEvent(db, sessionId, "generate.thin_pool", {
+        qualifyingCount: totalQualifying,
+        threshold: RECOVERY_TRIGGER,
+      });
       await set(ref(db, `sessions/${sessionId}/stack`), { generated: false, error: "thin-pool" });
       return NextResponse.json({ ok: true, thinPool: true });
     }
@@ -728,9 +764,24 @@ async function generateStackDirectly(sessionId: string): Promise<NextResponse> {
       restaurants: uniqueRestaurants,
     });
 
+    logEvent(db, sessionId, "generate.stack.written", {
+      durationMs: Date.now() - generateStart,
+      path: "fallback",
+      restaurantCount: uniqueRestaurants.length,
+      categoriesRepresented: [...new Set(uniqueRestaurants.map(r => r.matchCategoryId))],
+      poolDeleted: false,
+    });
+
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error("[generate-stack/direct] Fatal error:", err, "sessionId:", sessionId);
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("[generate-stack/direct] Fatal error:", message, "sessionId:", sessionId);
+    logEvent(db, sessionId, "error", {
+      route: "generate-stack",
+      path: "fallback",
+      message,
+      durationMs: Date.now() - generateStart,
+    });
     try {
       await set(ref(db, `sessions/${sessionId}/stack`), { generated: false, error: "api-failure" });
     } catch { /* ignore */ }
@@ -760,14 +811,12 @@ function isOpenFromPeriods(
 ): boolean {
   if (!hours?.periods?.length) return true; // unknown schedule → don't exclude
 
-  // Convert UTC time to America/Chicago local time for comparison
   const chicagoTime = new Date(now.toLocaleString("en-US", { timeZone: "America/Chicago" }));
   const day = chicagoTime.getDay();
   const currentMinutes = chicagoTime.getHours() * 60 + chicagoTime.getMinutes();
 
   for (const period of hours.periods) {
     if (!period.close) {
-      // No close time = 24-hour operation
       if (day === period.open.day) return true;
       continue;
     }
@@ -776,7 +825,6 @@ function isOpenFromPeriods(
     const closeMin = period.close.hour * 60 + period.close.minute;
 
     if (period.open.day === period.close.day) {
-      // Same-day period (e.g., Mon 11am–10pm)
       if (day === period.open.day && currentMinutes >= openMin && currentMinutes < closeMin) {
         return true;
       }
@@ -790,7 +838,6 @@ function isOpenFromPeriods(
   return false;
 }
 
-// Check if a pool entry is within the session's selected distance radius
 function withinDistance(
   place: Record<string, unknown>,
   sessionLat: number,
@@ -805,9 +852,6 @@ function withinDistance(
   return haversine(sessionLat, sessionLng, lat, lng) <= maxMiles;
 }
 
-// Fetch full Place Details for a single restaurant (by Google Place ID).
-// Used in the pool path to get address, phone, website, and dining attributes
-// for the 25 selected restaurants only — not the full pool.
 async function fetchPlaceDetails(placeId: string): Promise<Record<string, unknown>> {
   const key = process.env.GOOGLE_PLACES_API_KEY!;
   const controller = new AbortController();
@@ -835,6 +879,7 @@ async function fetchPlaceDetails(placeId: string): Promise<Record<string, unknow
 
 async function generateStackFromPool(sessionId: string): Promise<NextResponse> {
   const sessionRef = ref(db, `sessions/${sessionId}`);
+  const generateStart = Date.now();
 
   try {
     // ── Read session and pool from Firebase ─────────────────────────────────
@@ -873,7 +918,7 @@ async function generateStackFromPool(sessionId: string): Promise<NextResponse> {
       ];
     }
 
-    // ── Stage 1 — Category resolution (identical to direct path) ────────────
+    // ── Stage 1 — Category resolution ────────────────────────────────────────
     const negativeTally: Record<string, number> = {};
     for (const picks of Object.values(preferencesNegative)) {
       for (const id of (picks || [])) negativeTally[id] = (negativeTally[id] || 0) + 1;
@@ -943,34 +988,63 @@ async function generateStackFromPool(sessionId: string): Promise<NextResponse> {
       for (const r of (picks || [])) allRestrictions.add(r);
     }
 
-    // ── Stage 3 — Apply session-specific filters to pool ────────────────────
-    // Pool entries already passed venue filter and quality floor during build.
-    // Apply the session-specific filters here: distance, open hours, price.
-    // Venue filter is re-applied as a safety net (pool build should have caught these).
+    // Log generate.started — after resolution so we can include all session params
+    const coverage = session.categoryCoverage as Record<string, boolean> | undefined;
+    const hiddenCategories = coverage
+      ? Object.keys(coverage).filter(k => coverage[k] === false)
+      : [];
+
+    logEvent(db, sessionId, "generate.started", {
+      path: "pool",
+      sessionDistance: resolvedMiles,
+      sessionPrice: resolvedPrice,
+      selectedCategories: preferencePoolIds,
+      hiddenCategories,
+      dineIn: responses.dineIn ?? {},
+      participantCount,
+    });
+
+    // ── Stage 3 — Apply session-specific filters to pool ─────────────────────
+    // Split into individual filter passes to track counts at each stage.
+    // Logic is identical to the original combined .filter() — just split up.
     const now = new Date();
+
+    type FilterCounts = {
+      pool: number;
+      venue: number;
+      distance: number;
+      openHours: number;
+      price: number;
+      dedup: number;
+    };
+    const filterCounts: Record<string, FilterCounts> = {};
     const categoryResults: Record<string, Record<string, unknown>[]> = {};
 
     for (const cuisineId of preferencePoolIds) {
-      categoryResults[cuisineId] = (categoryRestaurants[cuisineId] || []).filter(
-        (p) =>
-          passesVenueFilter(p) &&
-          withinDistance(p, location.lat, location.lng, resolvedMiles) &&
-          isOpenFromPeriods(
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (p.regularOpeningHours as any),
-            now
-          ) &&
-          passesPriceFilter(p, priceLevels)
-      );
+      const candidates = categoryRestaurants[cuisineId] || [];
+      const afterVenue    = candidates.filter(p => passesVenueFilter(p));
+      const afterDist     = afterVenue.filter(p => withinDistance(p, location.lat, location.lng, resolvedMiles));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const afterOpen     = afterDist.filter(p => isOpenFromPeriods((p.regularOpeningHours as any), now));
+      const afterPrice    = afterOpen.filter(p => passesPriceFilter(p, priceLevels));
+
+      categoryResults[cuisineId] = afterPrice;
+      filterCounts[cuisineId] = {
+        pool:      candidates.length,
+        venue:     afterVenue.length,
+        distance:  afterDist.length,
+        openHours: afterOpen.length,
+        price:     afterPrice.length,
+        dedup:     0, // filled in after Stage 4b
+      };
     }
 
     let totalQualifying = Object.values(categoryResults).reduce((sum, arr) => sum + arr.length, 0);
 
     // ── Stage 4 — Graceful expansion (from pool — no API calls needed) ───────
-    // All 22 categories are already in the pool. Expansion simply applies the
-    // same session filters to adjacent categories already present in the pool.
     const topOffPool: Record<string, unknown>[] = [];
     const expandedCategories = new Set<string>(preferencePoolIds);
+    const expansionDetails: Array<{ cuisineId: string; added: number }> = [];
 
     if (totalQualifying < EXPANSION_TRIGGER) {
       const sortedPoolIds = [...preferencePoolIds].sort((a, b) => weights[b] - weights[a]);
@@ -981,28 +1055,36 @@ async function generateStackFromPool(sessionId: string): Promise<NextResponse> {
           if (exclusionSet.has(targetId) || expandedCategories.has(targetId)) continue;
           expandedCategories.add(targetId);
 
-          const filtered = (categoryRestaurants[targetId] || []).filter(
+          const candidates = categoryRestaurants[targetId] || [];
+          const filtered = candidates.filter(
             (p) =>
               passesVenueFilter(p) &&
               withinDistance(p, location.lat, location.lng, resolvedMiles) &&
-              isOpenFromPeriods(
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                (p.regularOpeningHours as any),
-                now
-              ) &&
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              isOpenFromPeriods((p.regularOpeningHours as any), now) &&
               passesPriceFilter(p, priceLevels)
           );
 
           topOffPool.push(...filtered);
+          expansionDetails.push({ cuisineId: targetId, added: filtered.length });
           totalQualifying += filtered.length;
           if (totalQualifying >= EXPANSION_TRIGGER) break outer;
         }
       }
+
+      logEvent(db, sessionId, "generate.expansion.completed", {
+        expandedCategories: expansionDetails.map(d => d.cuisineId),
+        addedCount: expansionDetails.reduce((sum, d) => sum + d.added, 0),
+        newTotal: totalQualifying,
+      });
     }
 
     // ── Stage 4b — Name deduplication ───────────────────────────────────────
     const { deduplicated, seenNames: dedupSeenNames } = deduplicateByName(categoryResults, location.lat, location.lng);
-    for (const [id, places] of Object.entries(deduplicated)) categoryResults[id] = places;
+    for (const [id, places] of Object.entries(deduplicated)) {
+      categoryResults[id] = places;
+      if (filterCounts[id]) filterCounts[id].dedup = places.length;
+    }
 
     const dedupedTopOff = topOffPool.filter((place) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1019,8 +1101,24 @@ async function generateStackFromPool(sessionId: string): Promise<NextResponse> {
 
     totalQualifying = Object.values(categoryResults).reduce((sum, arr) => sum + arr.length, 0) + topOffPool.length;
 
+    // Log filter pipeline — totals and per-category breakdown
+    logEvent(db, sessionId, "generate.filters.applied", {
+      path: "pool",
+      poolTotal:           Object.values(filterCounts).reduce((s, c) => s + c.pool, 0),
+      afterVenueFilter:    Object.values(filterCounts).reduce((s, c) => s + c.venue, 0),
+      afterDistanceFilter: Object.values(filterCounts).reduce((s, c) => s + c.distance, 0),
+      afterOpenHours:      Object.values(filterCounts).reduce((s, c) => s + c.openHours, 0),
+      afterPriceFilter:    Object.values(filterCounts).reduce((s, c) => s + c.price, 0),
+      afterDedup:          Object.values(filterCounts).reduce((s, c) => s + c.dedup, 0),
+      perCategory:         filterCounts,
+    });
+
     // ── Stage 5 — Thin-pool check ────────────────────────────────────────────
     if (totalQualifying < RECOVERY_TRIGGER) {
+      logEvent(db, sessionId, "generate.thin_pool", {
+        qualifyingCount: totalQualifying,
+        threshold: RECOVERY_TRIGGER,
+      });
       await set(ref(db, `sessions/${sessionId}/stack`), { generated: false, error: "thin-pool" });
       await remove(ref(db, `sessions/${sessionId}/pool`));
       return NextResponse.json({ ok: true, thinPool: true });
@@ -1062,20 +1160,23 @@ async function generateStackFromPool(sessionId: string): Promise<NextResponse> {
     const shuffled = shuffle(sampledRestaurants);
 
     // ── Stage 8 — Fetch Place Details + resolve photos for 25 restaurants ───
-    // Fetches full details (address, phone, website, dining attributes) for
-    // only the selected 25. All 25 detail calls run in parallel alongside
-    // photo resolution. Photo cap of 20 is preserved — fill-photos handles
-    // the remaining 5.
     const PHOTO_CONCURRENCY_CAP = 20;
+    let detailsSucceeded = 0;
+    let detailsFailed = 0;
+    let closedPermanentlyCount = 0;
 
     const detailsAndPhotos = await Promise.all(
       shuffled.map(async ({ place }, idx) => {
         const placeId = place.id as string;
 
-        // Fetch Place Details (parallel across all 25)
         const details = await fetchPlaceDetails(placeId);
 
-        // Resolve photo (capped at first 20)
+        if (Object.keys(details).length > 0) {
+          detailsSucceeded++;
+        } else {
+          detailsFailed++;
+        }
+
         const photos = (place.photos as GooglePhoto[]) || [];
         const photoRef = selectBestPhotoReference(photos);
         let photoUrl: string | null = null;
@@ -1087,26 +1188,34 @@ async function generateStackFromPool(sessionId: string): Promise<NextResponse> {
       })
     );
 
+    logEvent(db, sessionId, "generate.details.completed", {
+      requested: shuffled.length,
+      succeeded: detailsSucceeded,
+      failed: detailsFailed,
+      closedPermanently: closedPermanentlyCount, // incremented in Stage 9 below
+      substitutionsNeeded: 0, // updated below
+    });
+
     // ── Stage 9 — Build stack and write to Firebase ──────────────────────────
     const restaurants: StackRestaurant[] = [];
     const seenIds = new Set<string>();
+    let substitutionsNeeded = 0;
 
     for (let i = 0; i < shuffled.length; i++) {
       const { place, cuisineId } = shuffled[i];
       const { details, photoRef, photoUrl } = detailsAndPhotos[i];
 
-      // Skip permanently closed restaurants (substitution handled by dedup pass above)
       if ((details.businessStatus as string) === "CLOSED_PERMANENTLY") {
+        closedPermanentlyCount++;
+        substitutionsNeeded++;
         console.log(`[generate-stack/pool] Skipping permanently closed: ${(place.displayName as { text?: string })?.text}`);
         continue;
       }
 
-      // Deduplicate by place ID
       const placeId = place.id as string;
       if (seenIds.has(placeId)) continue;
       seenIds.add(placeId);
 
-      // Merge pool data with details data and transform to StackRestaurant
       const merged = { ...place, ...details };
       restaurants.push(
         transformPlace(merged, cuisineId, location.lat, location.lng, photoUrl, photoRef)
@@ -1124,9 +1233,26 @@ async function generateStackFromPool(sessionId: string): Promise<NextResponse> {
     // Delete pool — no longer needed once the stack is written
     await remove(ref(db, `sessions/${sessionId}/pool`));
 
+    logEvent(db, sessionId, "generate.stack.written", {
+      durationMs: Date.now() - generateStart,
+      path: "pool",
+      restaurantCount: restaurants.length,
+      categoriesRepresented: [...new Set(restaurants.map(r => r.matchCategoryId))],
+      poolDeleted: true,
+      closedPermanently: closedPermanentlyCount,
+      substitutionsNeeded,
+    });
+
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error("[generate-stack/pool] Fatal error:", err, "sessionId:", sessionId);
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("[generate-stack/pool] Fatal error:", message, "sessionId:", sessionId);
+    logEvent(db, sessionId, "error", {
+      route: "generate-stack",
+      path: "pool",
+      message,
+      durationMs: Date.now() - generateStart,
+    });
     try {
       await set(ref(db, `sessions/${sessionId}/stack`), { generated: false, error: "api-failure" });
     } catch { /* ignore */ }

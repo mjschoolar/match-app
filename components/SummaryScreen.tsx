@@ -8,12 +8,16 @@
 //   - Legacy RESTAURANTS fallback for prototype sessions without a generated stack.
 //   - Card expand/collapse behaviour unchanged.
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import { db } from "@/lib/firebase";
+import { logEvent } from "@/lib/logEvent";
 import { Session, RestaurantResult } from "@/lib/types";
 import { RESTAURANTS } from "@/lib/constants";
 
 interface Props {
   session: Session;
+  sessionId: string;
+  participantId: string;
 }
 
 // Fallback for legacy prototype sessions: look up knownFor/hours from RESTAURANTS constant
@@ -177,8 +181,9 @@ function RestaurantCard({
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
-export default function SummaryScreen({ session }: Props) {
+export default function SummaryScreen({ session, sessionId, participantId }: Props) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const completedLoggedRef = useRef(false);
 
   // Firebase may return arrays as objects with integer keys — normalise
   function toArray(val: unknown): RestaurantResult[] {
@@ -191,6 +196,20 @@ export default function SummaryScreen({ session }: Props) {
   const majority = toArray(session.result?.majority);
   const partial  = toArray(session.result?.partial);
   const hasAnyMatch = complete.length > 0 || majority.length > 0 || partial.length > 0;
+
+  // Log session.completed once on mount, from the creator only
+  useEffect(() => {
+    if (completedLoggedRef.current) return;
+    if (session.creatorId !== participantId) return;
+    completedLoggedRef.current = true;
+    logEvent(db, sessionId, "session.completed", {
+      completeMatchCount: complete.length,
+      majorityMatchCount: majority.length,
+      partialMatchCount:  partial.length,
+      participantCount:   Object.keys(session.participants ?? {}).length,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // The primary match is the first complete match, or the first majority match if none
   const primaryMatch = complete[0] ?? majority[0] ?? null;
