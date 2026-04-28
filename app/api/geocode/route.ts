@@ -13,22 +13,28 @@ const GEO_BASE = "https://maps.googleapis.com/maps/api/geocode/json";
 
 // Extract a human-readable neighborhood/city name from a geocode result.
 // Tries: neighborhood → sublocality → locality → first comma-segment of formatted address.
+// Appends the state abbreviation (e.g. ", TX") from administrative_area_level_1.
 function extractLabel(result: Record<string, unknown>): string {
   const components = (result.address_components as Array<{
     long_name: string;
+    short_name: string;
     types: string[];
   }>) || [];
 
-  const find = (types: string[]) =>
+  const findLong = (types: string[]) =>
     components.find((c) => types.some((t) => c.types.includes(t)))?.long_name;
+  const findShort = (types: string[]) =>
+    components.find((c) => types.some((t) => c.types.includes(t)))?.short_name;
 
-  return (
-    find(["neighborhood"]) ||
-    find(["sublocality_level_1", "sublocality"]) ||
-    find(["locality"]) ||
-    (result.formatted_address as string)?.split(",")[0] ||
-    "Unknown location"
-  );
+  const city =
+    findLong(["neighborhood"]) ||
+    findLong(["sublocality_level_1", "sublocality"]) ||
+    findLong(["locality"]);
+  const state = findShort(["administrative_area_level_1"]);
+
+  if (city && state) return `${city}, ${state}`;
+  if (city) return city;
+  return (result.formatted_address as string)?.split(",")[0] || "Unknown location";
 }
 
 export async function POST(req: NextRequest) {

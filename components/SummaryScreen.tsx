@@ -24,11 +24,16 @@ function getLegacyDetail(id: string) {
 // ── Action layer ──────────────────────────────────────────────────────────────
 
 function ActionLayer({ r }: { r: RestaurantResult }) {
-  const mapsUrl = r.location
-    ? `https://maps.google.com/?q=${r.location.lat},${r.location.lng}`
-    : r.address
-    ? `https://maps.google.com/?q=${encodeURIComponent(r.address)}`
-    : null;
+  // Fix 1b: use name + address so Google Maps shows the restaurant name as the destination.
+  // Fall back to address-only, then coordinates if name+address aren't available.
+  const mapsUrl =
+    r.name && r.address
+      ? `https://maps.google.com/?q=${encodeURIComponent(r.name + " " + r.address)}`
+      : r.address
+      ? `https://maps.google.com/?q=${encodeURIComponent(r.address)}`
+      : r.location
+      ? `https://maps.google.com/?q=${r.location.lat},${r.location.lng}`
+      : null;
 
   return (
     <div className="px-4 pb-4 pt-3 border-t border-white/10 space-y-3">
@@ -216,7 +221,7 @@ export default function SummaryScreen({ session }: Props) {
                 r={r}
                 tier="complete"
                 isExpanded={expandedId === r.id}
-                showActionLayer={r.id === primaryMatch?.id}
+                showActionLayer={true}
                 onToggle={() => handleToggle(r.id)}
               />
             ))}

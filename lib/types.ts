@@ -11,10 +11,12 @@ export interface StackRestaurant {
   id: string;                       // Google Places place ID
   name: string;
   matchCategory: string;            // Match cuisine label (e.g. "Japanese")
+  matchCategoryId: string;          // Match cuisine ID (e.g. "japanese") — used for hero image path
   rating: number;
   reviewCount: number;
   priceLevel: number | null;        // 1–4, or null if not set
   photoUrl: string | null;          // Resolved CDN URL from photo media endpoint
+  photoReferenceName: string | null; // Google Places photo resource name — for fill-photos retry
   address: string;
   phone: string | null;
   websiteUrl: string | null;
@@ -72,7 +74,11 @@ export interface Session {
     reducedPool?: boolean;
     error?: string;               // "thin-pool" | "api-failure"
     restaurants?: StackRestaurant[] | Record<string, StackRestaurant>;
+    photosFilled?: boolean;       // V2.1: set to true by fill-photos route when complete
   };
+
+  // V2.1: category coverage at session location (set by check-coverage route)
+  categoryCoverage?: Record<string, boolean>;
 
   responses?: {
     dineIn?: Record<string, string>;

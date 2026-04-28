@@ -55,10 +55,12 @@ function adaptLegacy(r: (typeof RESTAURANTS)[number]): StackRestaurant {
     id: r.id,
     name: r.name,
     matchCategory: r.cuisine,
+    matchCategoryId: "",    // no cuisine ID on legacy cards — hero fallback won't apply
     rating: r.rating,
     reviewCount: 0,
     priceLevel: priceIndex >= 0 ? priceIndex + 1 : null,
     photoUrl: r.image,
+    photoReferenceName: null,
     address: "",
     phone: null,
     websiteUrl: null,
@@ -103,6 +105,7 @@ function SwipeCard({
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [photoError, setPhotoError] = useState(false);
+  const [heroError,  setHeroError]  = useState(false);
 
   useEffect(() => {
     if (!wrapRef.current) return;
@@ -141,7 +144,15 @@ function SwipeCard({
     transition = "none";
   }
 
-  const hasPhoto = card.photoUrl && !photoError;
+  // Photo source resolution:
+  //   1. Google Places CDN URL (if resolved and no load error)
+  //   2. Cuisine hero image from /public/cuisine-heroes/{id}.jpg (if no hero error)
+  //   3. Solid grey — neither source available
+  const googlePhoto = card.photoUrl && !photoError ? card.photoUrl : null;
+  const heroSrc = card.matchCategoryId ? `/cuisine-heroes/${card.matchCategoryId}.jpg` : null;
+  const activeSrc = googlePhoto ?? (!heroError ? heroSrc : null);
+  const hasPhoto = !!activeSrc;
+
   const price = card.priceLevel ? PRICE_LABELS[card.priceLevel] : null;
   const reviewText = card.reviewCount > 0
     ? card.reviewCount >= 1000
@@ -174,7 +185,7 @@ function SwipeCard({
         style={
           hasPhoto
             ? {
-                backgroundImage: `url(${card.photoUrl})`,
+                backgroundImage: `url(${activeSrc})`,
                 backgroundSize: "cover",
                 backgroundPosition: "center",
                 backgroundColor: "#374151",
@@ -182,13 +193,21 @@ function SwipeCard({
             : { backgroundColor: "#374151" }
         }
       >
-        {/* Hidden img tag to detect load errors */}
+        {/* Hidden img tags to detect load errors for both photo sources */}
         {card.photoUrl && (
           <img
             src={card.photoUrl}
             alt=""
             className="hidden"
             onError={() => setPhotoError(true)}
+          />
+        )}
+        {!googlePhoto && heroSrc && (
+          <img
+            src={heroSrc}
+            alt=""
+            className="hidden"
+            onError={() => setHeroError(true)}
           />
         )}
 

@@ -289,6 +289,80 @@ async function queryCategory(
   }
 }
 
+// ── Venue type exclusion (Change 2) ──────────────────────────────────────────
+//
+// Entertainment venues that serve food (TopGolf, Toyota Music Factory, Pinstack,
+// Dave & Buster's) appear in restaurant results because Google tags them with
+// restaurant types alongside their primary venue type. Exclude any place whose
+// types array contains a known non-restaurant venue type.
+// Note: "bar" and "night_club" are intentionally excluded from this set —
+// restaurant/bar combos legitimately carry those types.
+
+const EXCLUDED_VENUE_TYPES = new Set([
+  "amusement_center",
+  "amusement_park",
+  "bowling_alley",
+  "golf_course",
+  "event_venue",
+  "performing_arts_theater",
+  "stadium",
+  "casino",
+]);
+
+function passesVenueFilter(place: Record<string, unknown>): boolean {
+  const types = place.types as string[] | undefined;
+  if (!types) return true;
+  return !types.some((t) => EXCLUDED_VENUE_TYPES.has(t));
+}
+
+// ── Name-based deduplication (Change 3) ──────────────────────────────────────
+//
+// Chain restaurants with multiple nearby locations (Hard Eight BBQ, In-N-Out)
+// can appear in multiple category results with different Place IDs. After all
+// category results are filtered, deduplicate by normalized name across the full
+// pool. Sorting each category by distance before processing ensures the closest
+// location wins when a duplicate is found.
+
+function deduplicateByName(
+  results: Record<string, Record<string, unknown>[]>,
+  sessionLat: number,
+  sessionLng: number
+): { deduplicated: Record<string, Record<string, unknown>[]>; seenNames: Set<string> } {
+  const seenNames = new Set<string>();
+  const deduplicated: Record<string, Record<string, unknown>[]> = {};
+
+  for (const [cuisineId, places] of Object.entries(results)) {
+    // Sort by distance ascending so the closest location is seen first and wins
+    const sorted = [...places].sort((a, b) => {
+      const la = a.location as { latitude: number; longitude: number } | undefined;
+      const lb = b.location as { latitude: number; longitude: number } | undefined;
+      const da = la ? haversine(sessionLat, sessionLng, la.latitude, la.longitude) : Infinity;
+      const db2 = lb ? haversine(sessionLat, sessionLng, lb.latitude, lb.longitude) : Infinity;
+      return da - db2;
+    });
+
+    deduplicated[cuisineId] = [];
+    for (const place of sorted) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const nameObj = place.displayName as any;
+      const rawName = nameObj?.text || (typeof nameObj === "string" ? nameObj : "");
+      const name = rawName.toLowerCase().trim();
+      if (!name) {
+        // No name available — include without dedup check
+        deduplicated[cuisineId].push(place);
+        continue;
+      }
+      if (!seenNames.has(name)) {
+        seenNames.add(name);
+        deduplicated[cuisineId].push(place);
+      }
+      // Duplicate found — skip this location (closer one already added)
+    }
+  }
+
+  return { deduplicated, seenNames };
+}
+
 // ── Quality and availability filters ─────────────────────────────────────────
 
 function passesQualityFloor(place: Record<string, unknown>): boolean {
@@ -374,6 +448,35 @@ function getCategorySlotBoost(cuisineId: string, restrictions: Set<string>): num
   return boost;
 }
 
+// ── Photo reference selection (Change 4) ─────────────────────────────────────
+//
+// Google Places returns up to 10 photo references per restaurant. Instead of
+// always taking photos[0] (often a recent user upload or exterior shot), filter
+// to landscape-oriented photos and pick the one with the widest pixel dimension —
+// more likely to be professional food photography.
+
+interface GooglePhoto {
+  name: string;
+  widthPx?: number;
+  heightPx?: number;
+}
+
+function selectBestPhotoReference(photos: GooglePhoto[]): string | null {
+  if (!photos || photos.length === 0) return null;
+
+  // Filter to landscape-oriented photos (width > height)
+  const landscape = photos.filter(
+    (p) => p.widthPx && p.heightPx && p.widthPx > p.heightPx
+  );
+
+  // From landscape photos, pick the one with the largest width
+  // If no landscape photos, fall back to the full set
+  const pool = landscape.length > 0 ? landscape : photos;
+  return pool.reduce((best, p) =>
+    (p.widthPx ?? 0) > (best.widthPx ?? 0) ? p : best
+  ).name;
+}
+
 // ── Photo resolution ──────────────────────────────────────────────────────────
 
 async function resolvePhoto(photoName: string): Promise<string | null> {
@@ -402,7 +505,8 @@ function transformPlace(
   cuisineId: string,
   sessionLat: number,
   sessionLng: number,
-  photoUrl: string | null
+  photoUrl: string | null,
+  photoReferenceName: string | null
 ): StackRestaurant {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const name = (place.displayName as any)?.text || (place.displayName as string) || "Unknown";
@@ -449,10 +553,12 @@ function transformPlace(
     id: place.id as string,
     name,
     matchCategory: CATEGORY_LABELS[cuisineId] || cuisineId,
+    matchCategoryId: cuisineId,
     rating: (place.rating as number) || 0,
     reviewCount: (place.userRatingCount as number) || 0,
     priceLevel,
     photoUrl,
+    photoReferenceName,
     address: (place.formattedAddress as string) || "",
     phone: (place.nationalPhoneNumber as string) || null,
     websiteUrl: (place.websiteUri as string) || null,
@@ -646,9 +752,9 @@ export async function POST(req: NextRequest) {
           location.lng,
           radiusMeters,
         );
-        // Apply quality floor, open-hours filter, and client-side price filter
+        // Apply venue filter first (cheapest), then quality floor, open-hours, price filter
         categoryResults[cuisineId] = raw.filter(
-          (p) => passesQualityFloor(p) && isCurrentlyOpen(p) && passesPriceFilter(p, priceLevels)
+          (p) => passesVenueFilter(p) && passesQualityFloor(p) && isCurrentlyOpen(p) && passesPriceFilter(p, priceLevels)
         );
       })
     );
@@ -685,7 +791,7 @@ export async function POST(req: NextRequest) {
             radiusMeters,
           );
           const filtered = raw.filter(
-            (p) => passesQualityFloor(p) && isCurrentlyOpen(p) && passesPriceFilter(p, priceLevels)
+            (p) => passesVenueFilter(p) && passesQualityFloor(p) && isCurrentlyOpen(p) && passesPriceFilter(p, priceLevels)
           );
           topOffPool.push(...filtered);
           totalQualifying += filtered.length;
@@ -695,6 +801,40 @@ export async function POST(req: NextRequest) {
         }
       }
     }
+
+    // ── Stage 4b — Name-based deduplication (Change 3) ───────────────────────
+    //
+    // Run across all filtered categoryResults. Sorts each category by distance
+    // so the closest location wins. Returns the deduped pool and a seenNames Set
+    // so topOffPool entries can also be checked.
+
+    const { deduplicated, seenNames: dedupSeenNames } = deduplicateByName(
+      categoryResults,
+      location.lat,
+      location.lng
+    );
+    // Replace categoryResults with deduped versions
+    for (const [id, places] of Object.entries(deduplicated)) {
+      categoryResults[id] = places;
+    }
+
+    // Also filter topOffPool against the same seenNames set
+    const dedupedTopOff = topOffPool.filter((place) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const nameObj = place.displayName as any;
+      const rawName = nameObj?.text || (typeof nameObj === "string" ? nameObj : "");
+      const name = rawName.toLowerCase().trim();
+      if (!name) return true;
+      if (dedupSeenNames.has(name)) return false;
+      dedupSeenNames.add(name);
+      return true;
+    });
+    topOffPool.length = 0;
+    topOffPool.push(...dedupedTopOff);
+
+    // Recount qualifying after dedup
+    totalQualifying = Object.values(categoryResults).reduce((sum, arr) => sum + arr.length, 0)
+      + topOffPool.length;
 
     // ── Stage 5 — Thin-pool check ─────────────────────────────────────────
 
@@ -765,18 +905,26 @@ export async function POST(req: NextRequest) {
     // Shuffle so participants can't infer category order
     const shuffled = shuffle(sampledRestaurants);
 
-    // ── Stage 8 — Resolve photos ──────────────────────────────────────────
+    // ── Stage 8 — Resolve photos (Change 4) ──────────────────────────────────
     // Cap at 20 concurrent photo calls to stay within Vercel's 10-second limit.
-    // Restaurants beyond the cap get null photoUrl (fallback grey tile on card).
+    // Restaurants beyond the cap get null photoUrl — fill-photos route resolves
+    // these in a second pass using the stored photoReferenceName.
+    //
+    // Photo selection: filter to landscape-oriented photos and pick the widest —
+    // more likely to be professional food photography than photos[0].
 
     const PHOTO_CONCURRENCY_CAP = 20;
+
+    // First, select the best photo reference for each restaurant (no network calls)
+    const photoRefs = shuffled.map(({ place }) => {
+      const photos = (place.photos as GooglePhoto[]) || [];
+      return selectBestPhotoReference(photos); // string | null
+    });
+
+    // Then resolve CDN URLs for the first 20 (the rest stay null until fill-photos)
     const photoResults = await Promise.all(
-      shuffled.map(async ({ place }, idx) => {
+      photoRefs.map(async (photoName, idx) => {
         if (idx >= PHOTO_CONCURRENCY_CAP) return null;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const photos = place.photos as any[];
-        if (!photos?.length) return null;
-        const photoName = photos[0].name as string;
         if (!photoName) return null;
         return resolvePhoto(photoName);
       })
@@ -790,7 +938,8 @@ export async function POST(req: NextRequest) {
         cuisineId,
         location.lat,
         location.lng,
-        photoResults[i]
+        photoResults[i],
+        photoRefs[i]   // stored for fill-photos retry (Change 5)
       );
     });
 

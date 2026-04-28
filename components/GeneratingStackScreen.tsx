@@ -73,14 +73,35 @@ export default function GeneratingStackScreen({ sessionId, session, isCreator }:
     return () => clearTimeout(timeout);
   }, [stackGenerated, stackError]);
 
-  // ── 3. Preload photos when stack is ready (all devices) ──────────────────
+  // ── 3. When stack is ready: call fill-photos (creator) + preload images ──
   useEffect(() => {
     if (!stackGenerated) return;
 
     const restaurants = normalizeRestaurants(session.stack?.restaurants);
-    const photoUrls = restaurants
-      .map((r) => r.photoUrl)
-      .filter((url): url is string => typeof url === "string" && url.length > 0);
+
+    // Change 5: creator fires fill-photos in parallel with preloading.
+    // The route resolves null-photo URLs and writes them back to Firebase.
+    // We don't wait for it — preloading picks up whatever is already resolved.
+    if (isCreator) {
+      fetch("/api/fill-photos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      }).catch((err) => {
+        console.error("[GeneratingStackScreen] fill-photos call failed:", err);
+      });
+    }
+
+    // Build preload URL list: Google photo if available, else cuisine hero fallback.
+    // Both are preloaded so the card renders without flash once swiping begins.
+    const photoUrls: string[] = [];
+    for (const r of restaurants) {
+      if (r.photoUrl) {
+        photoUrls.push(r.photoUrl);
+      } else if (r.matchCategoryId) {
+        photoUrls.push(`/cuisine-heroes/${r.matchCategoryId}.jpg`);
+      }
+    }
 
     if (photoUrls.length === 0) {
       setImagesPreloaded(true);

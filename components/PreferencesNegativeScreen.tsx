@@ -11,8 +11,6 @@ import { ref, set, get, remove } from "firebase/database";
 import { Session } from "@/lib/types";
 import { CUISINES } from "@/lib/constants";
 
-const PREF_CAP = Math.max(2, Math.round(CUISINES.length * 0.25));
-
 interface Props {
   sessionId: string;
   session: Session;
@@ -23,6 +21,12 @@ export default function PreferencesNegativeScreen({ sessionId, session, particip
   const participants = Object.entries(session.participants || {});
   const prefNegativeResponses = session.responses?.preferencesNegative || {};
   const prefNegativeDone = session.responses?.preferencesNegativeDone || {};
+
+  // Change 7: filter to categories confirmed present in the session's market.
+  // undefined (not yet loaded) → show; false (confirmed absent) → hide.
+  const categoryCoverage = session.categoryCoverage || {};
+  const visibleCuisines = CUISINES.filter((c) => categoryCoverage[c.id] !== false);
+  const PREF_CAP = Math.max(2, Math.round(visibleCuisines.length * 0.25));
 
   const [localSelections, setLocalSelections] = useState<string[]>(() =>
     Array.isArray(prefNegativeResponses[participantId]) ? prefNegativeResponses[participantId] : []
@@ -110,7 +114,7 @@ export default function PreferencesNegativeScreen({ sessionId, session, particip
         )}
 
         <div className="grid grid-cols-3 gap-2">
-          {CUISINES.map((cuisine) => {
+          {visibleCuisines.map((cuisine) => {
             const isMyPositivePick = myPositivePicks.has(cuisine.id);
             const iMine = localSelections.includes(cuisine.id);
             const othersCount = othersMarkCountFor(cuisine.id);

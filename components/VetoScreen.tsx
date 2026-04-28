@@ -57,9 +57,13 @@ export default function VetoScreen({ sessionId, session, participantId }: Props)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allResponded, isReveal, isCreator]);
 
-  // Filtered grid: exclude categories that a majority already marked negative
+  // Filtered grid:
+  // 1. Exclude categories with zero coverage in this market (Change 7)
+  // 2. Exclude categories a majority already marked negative
+  const categoryCoverage = session.categoryCoverage || {};
   const threshold = Math.ceil(participantCount / 2);
   const vetoableCuisines = CUISINES.filter((cuisine) => {
+    if (categoryCoverage[cuisine.id] === false) return false; // confirmed absent
     const negativeCount = Object.values(prefNegativeResponses).filter(
       (picks) => Array.isArray(picks) && (picks as string[]).includes(cuisine.id)
     ).length;

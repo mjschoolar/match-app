@@ -12,8 +12,6 @@ import { ref, set, get, remove } from "firebase/database";
 import { Session } from "@/lib/types";
 import { CUISINES } from "@/lib/constants";
 
-const PREF_CAP = Math.max(2, Math.round(CUISINES.length * 0.25));
-
 interface Props {
   sessionId: string;
   session: Session;
@@ -24,6 +22,13 @@ export default function PreferencesPositiveScreen({ sessionId, session, particip
   const participants = Object.entries(session.participants || {});
   const prefPositiveResponses = session.responses?.preferencesPositive || {};
   const prefPositiveDone = session.responses?.preferencesPositiveDone || {};
+
+  // Change 7: filter to categories confirmed present in the session's market.
+  // undefined (not yet loaded) → show; false (confirmed absent) → hide.
+  // Cap recalculated from visible count so percentages stay consistent.
+  const categoryCoverage = session.categoryCoverage || {};
+  const visibleCuisines = CUISINES.filter((c) => categoryCoverage[c.id] !== false);
+  const PREF_CAP = Math.max(2, Math.round(visibleCuisines.length * 0.25));
 
   const [localSelections, setLocalSelections] = useState<string[]>(() =>
     Array.isArray(prefPositiveResponses[participantId]) ? prefPositiveResponses[participantId] : []
@@ -102,7 +107,7 @@ export default function PreferencesPositiveScreen({ sessionId, session, particip
         )}
 
         <div className="grid grid-cols-3 gap-2">
-          {CUISINES.map((cuisine) => {
+          {visibleCuisines.map((cuisine) => {
             const iMine = localSelections.includes(cuisine.id);
             const othersCount = othersPickCountFor(cuisine.id);
             // Total visible count: others + self (when I've also picked it)
