@@ -607,7 +607,7 @@ export async function POST(req: NextRequest) {
     const distanceValues = (Object.values(distanceResponses) as number[]).filter(
       (v) => typeof v === "number"
     );
-    const resolvedMiles = Math.max(1, Math.min(30, median(distanceValues.length > 0 ? distanceValues : [5])));
+    const resolvedMiles = Math.max(1, Math.min(15, median(distanceValues.length > 0 ? distanceValues : [5])));
     const radiusMeters = resolvedMiles * 1609.34;
 
     const priceResponses = responses.price || {};
