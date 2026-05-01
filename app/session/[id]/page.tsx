@@ -210,13 +210,16 @@ export default function SessionPage() {
         else if (matchedIds.length > 0)         partial.push(entry);
       }
 
-      // Log swipe distribution — fires exactly once, from whichever device
-      // detects all-done first (swipeAdvancedRef guards against duplicates)
-      logEvent(db, sessionId, "session.swipe.distribution", {
-        distribution: swipeDistribution,
-        participantCount: total,
-        stackSize: restaurants.length,
-      });
+      // Log swipe distribution — creator only, consistent with other session-level
+      // events. The swipeAdvancedRef guard is per-device so can't prevent two
+      // participants from both detecting all-done in the same Firebase update cycle.
+      if (session.creatorId === participantId) {
+        logEvent(db, sessionId, "session.swipe.distribution", {
+          distribution: swipeDistribution,
+          participantCount: total,
+          stackSize: restaurants.length,
+        });
+      }
 
       const result = {
         complete: complete.length > 0 ? complete : null,
